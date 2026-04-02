@@ -21,11 +21,16 @@
     health: [0, 60, 140, 280, 500, 780, 1100, 1550, 2100, 2800, 3600, 4500],
     defense: [0, 30, 80, 170, 320, 520, 780, 1100, 1500, 2000, 2600, 3300]
   };
+  const STORAGE_COSTS = {
+    emeralds: [0, 300, 650, 1100, 1700, 2500, 3500, 4700, 6200, 8000, 10100, 12500],
+    wood: [0, 100, 220, 400, 650, 950, 1350, 1850, 2500, 3300, 4300, 5500]
+  };
   const UPGRADE_RESOURCE_BY_CATEGORY = {
     damage: 'ore',
     attackSpeed: 'crops',
     health: 'wood',
-    defense: 'fish'
+    defense: 'fish',
+    storage: 'wood'
   };
 
   const state = {
@@ -84,10 +89,12 @@
     upgradeAttackSpeedMeta: document.getElementById('upgradeAttackSpeedMeta'),
     upgradeHealthMeta: document.getElementById('upgradeHealthMeta'),
     upgradeDefenseMeta: document.getElementById('upgradeDefenseMeta'),
+    upgradeStorageMeta: document.getElementById('upgradeStorageMeta'),
     upgradeDamageBtn: document.getElementById('upgradeDamageBtn'),
     upgradeAttackSpeedBtn: document.getElementById('upgradeAttackSpeedBtn'),
     upgradeHealthBtn: document.getElementById('upgradeHealthBtn'),
     upgradeDefenseBtn: document.getElementById('upgradeDefenseBtn'),
+    upgradeStorageBtn: document.getElementById('upgradeStorageBtn'),
     upgradeNoticeList: document.getElementById('upgradeNoticeList'),
     upgradeReadOnlyPanel: document.getElementById('upgradeReadOnlyPanel'),
     upgradeReadOnlyList: document.getElementById('upgradeReadOnlyList'),
@@ -96,14 +103,17 @@
     upgradeAttackSpeedCard: document.getElementById('upgradeAttackSpeedCard'),
     upgradeHealthCard: document.getElementById('upgradeHealthCard'),
     upgradeDefenseCard: document.getElementById('upgradeDefenseCard'),
+    upgradeStorageCard: document.getElementById('upgradeStorageCard'),
     upgradeDamageBadge: document.getElementById('upgradeDamageBadge'),
     upgradeAttackSpeedBadge: document.getElementById('upgradeAttackSpeedBadge'),
     upgradeHealthBadge: document.getElementById('upgradeHealthBadge'),
     upgradeDefenseBadge: document.getElementById('upgradeDefenseBadge'),
+    upgradeStorageBadge: document.getElementById('upgradeStorageBadge'),
     upgradeDamageBar: document.getElementById('upgradeDamageBar'),
     upgradeAttackSpeedBar: document.getElementById('upgradeAttackSpeedBar'),
     upgradeHealthBar: document.getElementById('upgradeHealthBar'),
-    upgradeDefenseBar: document.getElementById('upgradeDefenseBar')
+    upgradeDefenseBar: document.getElementById('upgradeDefenseBar'),
+    upgradeStorageBar: document.getElementById('upgradeStorageBar')
   };
 
   function fmt(value) {
@@ -445,12 +455,54 @@
     });
     renderHqMarker();
     renderTradeRoutesOverlay();
+    refreshTerritoryTooltips();
   }
 
   function territoryCenterByName(name) {
     const t = state.territoryByName.get(name);
     if (!t) return null;
     return worldToLayer((t.minX + t.maxX) / 2, (t.minZ + t.maxZ) / 2);
+  }
+
+  function getTerritoryStorageRow(name) {
+    const room = state.currentRoom || {};
+    const all = room.perTerritoryStorage || {};
+    return all[name] || null;
+  }
+
+  function getMainResourceKey(name) {
+    const territory = state.territoryByName.get(name);
+    if (!territory) return 'wood';
+    const keys = ['wood', 'ore', 'crops', 'fish'];
+    let best = 'wood';
+    let bestValue = -1;
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const val = Number(territory.resources && territory.resources[key] ? territory.resources[key] : 0);
+      if (val > bestValue) {
+        bestValue = val;
+        best = key;
+      }
+    }
+    return best;
+  }
+
+  function territoryTooltipHtml(name) {
+    const row = getTerritoryStorageRow(name);
+    if (!row) return name;
+    const mainKey = getMainResourceKey(name);
+    return (
+      '<strong>' + name + '</strong><br>' +
+      'Emeralds: ' + fmt(row.emeralds) + '<br>' +
+      mainKey.charAt(0).toUpperCase() + mainKey.slice(1) + ': ' + fmt(row[mainKey])
+    );
+  }
+
+  function refreshTerritoryTooltips() {
+    state.layerByName.forEach(function (layer, name) {
+      if (!layer || !layer.getTooltip || !layer.getTooltip()) return;
+      layer.setTooltipContent(territoryTooltipHtml(name));
+    });
   }
 
   function findRouteToHq(fromName, hqName) {
@@ -570,7 +622,10 @@
         layer.on('click', function () {
           toggleTerritory(t.name);
         });
-        layer.bindTooltip(t.name, { sticky: true, direction: 'auto' });
+        layer.bindTooltip(territoryTooltipHtml(t.name), { sticky: true, direction: 'auto' });
+        layer.on('mouseover', function () {
+          layer.setTooltipContent(territoryTooltipHtml(t.name));
+        });
         layer.addTo(state.map);
         state.layerByName.set(t.name, layer);
       });
@@ -642,6 +697,7 @@
       if (typeof payload.nextTickInMs === 'number') {
         startTickCountdownTimer(payload.nextTickInMs);
       }
+      refreshTerritoryTooltips();
     }
   };
 
@@ -700,12 +756,22 @@
     },
     renderCategory(category, cardEl, badgeEl, barEl, metaEl, btnEl) {
       const level = this.getSelectedUpgradeLevel(category);
-      const nextCost = level < 11 ? (UPGRADE_COSTS[category][level + 1] || 0) : 0;
+      const nextCost = level < 11 && UPGRADE_COSTS[category]
+        ? (UPGRADE_COSTS[category][level + 1] || 0)
+        : 0;
       const can = this.canUpgrade(category);
       const maxed = level >= 11;
-      metaEl.textContent = level >= 11
-        ? 'Level 11 · Maxed'
-        : 'Level ' + level + ' · Hourly drain ' + nextCost + ' ' + UPGRADE_RESOURCE_BY_CATEGORY[category] + ' (inactive when insufficient)';
+      if (category === 'storage') {
+        const emeraldCost = level < 11 ? (STORAGE_COSTS.emeralds[level + 1] || 0) : 0;
+        const woodCost = level < 11 ? (STORAGE_COSTS.wood[level + 1] || 0) : 0;
+        metaEl.textContent = level >= 11
+          ? 'Level 11 · Maxed'
+          : 'Level ' + level + ' · Next cost ' + emeraldCost + ' emeralds + ' + woodCost + ' wood';
+      } else {
+        metaEl.textContent = level >= 11
+          ? 'Level 11 · Maxed'
+          : 'Level ' + level + ' · Hourly drain ' + nextCost + ' ' + UPGRADE_RESOURCE_BY_CATEGORY[category] + ' (inactive when insufficient)';
+      }
       btnEl.disabled = !can;
       badgeEl.textContent = 'Lv' + level;
       badgeEl.classList.toggle('maxed', maxed);
@@ -732,7 +798,8 @@
         const a = parseInt(row.attackSpeed || 0, 10) || 0;
         const h = parseInt(row.health || 0, 10) || 0;
         const def = parseInt(row.defense || 0, 10) || 0;
-        return '<li>' + name + ': D' + d + ' / AS' + a + ' / H' + h + ' / DEF' + def + '</li>';
+        const st = parseInt(row.storage || 0, 10) || 0;
+        return '<li>' + name + ': D' + d + ' / AS' + a + ' / H' + h + ' / DEF' + def + ' / ST' + st + '</li>';
       }).join('');
     },
     render() {
@@ -745,18 +812,21 @@
       this.renderCategory('attackSpeed', els.upgradeAttackSpeedCard, els.upgradeAttackSpeedBadge, els.upgradeAttackSpeedBar, els.upgradeAttackSpeedMeta, els.upgradeAttackSpeedBtn);
       this.renderCategory('health', els.upgradeHealthCard, els.upgradeHealthBadge, els.upgradeHealthBar, els.upgradeHealthMeta, els.upgradeHealthBtn);
       this.renderCategory('defense', els.upgradeDefenseCard, els.upgradeDefenseBadge, els.upgradeDefenseBar, els.upgradeDefenseMeta, els.upgradeDefenseBtn);
+      this.renderCategory('storage', els.upgradeStorageCard, els.upgradeStorageBadge, els.upgradeStorageBar, els.upgradeStorageMeta, els.upgradeStorageBtn);
       this.renderNotices();
-      if (!room || room.status !== 'playing') {
+      if (!room || (room.status !== 'playing' && room.status !== 'prep')) {
         els.upgradeDamageBtn.disabled = true;
         els.upgradeAttackSpeedBtn.disabled = true;
         els.upgradeHealthBtn.disabled = true;
         els.upgradeDefenseBtn.disabled = true;
+        els.upgradeStorageBtn.disabled = true;
       }
       if (!isDefender) {
         els.upgradeDamageBtn.disabled = true;
         els.upgradeAttackSpeedBtn.disabled = true;
         els.upgradeHealthBtn.disabled = true;
         els.upgradeDefenseBtn.disabled = true;
+        els.upgradeStorageBtn.disabled = true;
       }
       els.setHqBtn.disabled = !this.canSetHq();
     },
@@ -888,6 +958,7 @@
           selectionController.applyServerSelection(room.selectedTerritories);
         }
         lobbyView.renderRoom(room);
+        refreshTerritoryTooltips();
       });
       state.socket.on('prepTick', function (payload) {
         if (!state.currentRoom) return;
@@ -902,6 +973,9 @@
       });
       state.socket.on('tick:update', function (payload) {
         state.lastTickPayload = payload;
+        if (state.currentRoom && payload && payload.perTerritoryStorage) {
+          state.currentRoom.perTerritoryStorage = payload.perTerritoryStorage;
+        }
         lobbyView.renderTick(payload);
       });
       state.socket.on('upgrade:applied', function (payload) {
@@ -1067,6 +1141,9 @@
     });
     els.upgradeDefenseBtn.addEventListener('click', function () {
       upgradeMenuController.apply('defense');
+    });
+    els.upgradeStorageBtn.addEventListener('click', function () {
+      upgradeMenuController.apply('storage');
     });
     els.upgradeSfxToggleBtn.addEventListener('click', function () {
       setSfxEnabled(!state.sfxEnabled);
