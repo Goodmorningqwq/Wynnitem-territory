@@ -13,6 +13,7 @@
   const MAP_BG_SCALE_X = 0.803;
   const MAP_BG_SCALE_Y = 0.966;
   const SOCKET_DEV_PORT = 3001;
+  const ECO_WAR_SESSION_KEY = 'ecoWarRoomSessionV1';
   const FLIP_Z = true;
   const UPGRADE_COSTS = {
     damage: [0, 50, 120, 250, 450, 700, 1000, 1400, 1900, 2500, 3200, 4000],
@@ -43,7 +44,9 @@
     tickCountdownTimer: null,
     selectedUpgradeTerritory: '',
     upgradeNotices: [],
-    sfxEnabled: true
+    sfxEnabled: true,
+    socketBase: '',
+    resumeInFlight: false
   };
 
   const els = {
@@ -300,6 +303,33 @@
 
   function setStatus(text) {
     els.statusText.textContent = text;
+  }
+
+  function saveRoomSession(session) {
+    try {
+      localStorage.setItem(ECO_WAR_SESSION_KEY, JSON.stringify(session));
+    } catch (_e) {}
+  }
+
+  function loadRoomSession() {
+    try {
+      const raw = localStorage.getItem(ECO_WAR_SESSION_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      if (!/^\d{6}$/.test(parsed.roomId || '')) return null;
+      if (!parsed.playerToken || typeof parsed.playerToken !== 'string') return null;
+      if ((parsed.role !== 'defender' && parsed.role !== 'attacker')) return null;
+      return parsed;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function clearRoomSession() {
+    try {
+      localStorage.removeItem(ECO_WAR_SESSION_KEY);
+    } catch (_e) {}
   }
 
   /**
@@ -670,6 +700,38 @@
   };
 
   const socketController = {
+    persistSession(roomId, role, playerToken) {
+      if (!/^\d{6}$/.test(roomId || '') || !playerToken) return;
+      saveRoomSession({
+        roomId,
+        role,
+        playerToken,
+        socketBase: state.socketBase || ''
+      });
+    },
+    tryResumeSession() {
+      if (!state.socket || !state.connected || state.resumeInFlight) return;
+      const session = loadRoomSession();
+      if (!session) return;
+      if (session.socketBase && state.socketBase && session.socketBase !== state.socketBase) {
+        clearRoomSession();
+        return;
+      }
+      state.resumeInFlight = true;
+      state.socket.emit('resumeRoom', {
+        roomId: session.roomId,
+        playerToken: session.playerToken
+      }, function (resp) {
+        state.resumeInFlight = false;
+        if (!resp || !resp.ok) {
+          clearRoomSession();
+          setStatus('Connected to room server');
+          return;
+        }
+        state.role = resp.role;
+        setStatus('Session resumed: ' + resp.roomId + ' (' + resp.role + ')');
+      });
+    },
     init() {
       const socketBase = getEcoWarSocketBase();
       const sharedToken = getEcoWarSharedToken();
@@ -680,6 +742,7 @@
         );
         return;
       }
+      state.socketBase = socketBase;
       const socketOptions = { transports: ['websocket', 'polling'] };
       if (sharedToken) {
         socketOptions.auth = { token: sharedToken };
@@ -688,6 +751,7 @@
       state.socket.on('connect', function () {
         state.connected = true;
         setStatus('Connected to room server');
+        socketController.tryResumeSession();
       });
       state.socket.on('connect_error', function () {
         state.connected = false;
@@ -708,6 +772,9 @@
       });
       state.socket.on('roomState', function (room) {
         state.currentRoom = room;
+        if (!room) {
+          clearRoomSession();
+        }
         if (room && Array.isArray(room.selectedTerritories)) {
           selectionController.applyServerSelection(room.selectedTerritories);
         }
@@ -745,6 +812,7 @@
         state.armedForDefenderCreate = false;
         els.createGameBtn.textContent = 'Create 1v1 Eco War Game';
         setStatus('Room created: ' + resp.roomId);
+        socketController.persistSession(resp.roomId, 'defender', resp.playerToken || '');
         socketController.syncSelectionIfAllowed();
       });
     },
@@ -758,6 +826,7 @@
         }
         state.role = 'attacker';
         setStatus('Joined room: ' + resp.roomId);
+        socketController.persistSession(resp.roomId, 'attacker', resp.playerToken || '');
       });
     },
     setReady() {
