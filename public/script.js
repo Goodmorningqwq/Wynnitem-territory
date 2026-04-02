@@ -13,7 +13,7 @@
   const MAP_BG_SCALE_X = 0.803;
   const MAP_BG_SCALE_Y = 0.966;
   const SOCKET_DEV_PORT = 3001;
-  const ECO_WAR_SESSION_KEY = 'ecoWarRoomSessionV1';
+  const ECO_WAR_SESSION_KEY_PREFIX = 'ecoWarRoomSessionV1';
   const FLIP_Z = true;
   const UPGRADE_COSTS = {
     damage: [0, 50, 120, 250, 450, 700, 1000, 1400, 1900, 2500, 3200, 4000],
@@ -305,15 +305,20 @@
     els.statusText.textContent = text;
   }
 
+  function roomSessionKey() {
+    const base = state.socketBase || 'default';
+    return ECO_WAR_SESSION_KEY_PREFIX + ':' + base;
+  }
+
   function saveRoomSession(session) {
     try {
-      localStorage.setItem(ECO_WAR_SESSION_KEY, JSON.stringify(session));
+      sessionStorage.setItem(roomSessionKey(), JSON.stringify(session));
     } catch (_e) {}
   }
 
   function loadRoomSession() {
     try {
-      const raw = localStorage.getItem(ECO_WAR_SESSION_KEY);
+      const raw = sessionStorage.getItem(roomSessionKey());
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return null;
@@ -328,8 +333,15 @@
 
   function clearRoomSession() {
     try {
-      localStorage.removeItem(ECO_WAR_SESSION_KEY);
+      sessionStorage.removeItem(roomSessionKey());
     } catch (_e) {}
+  }
+
+  function inferRoleFromRoom(room) {
+    if (!room || !state.socket || !state.socket.id) return null;
+    if (room.defenderSocketId === state.socket.id) return 'defender';
+    if (room.attackerSocketId === state.socket.id) return 'attacker';
+    return null;
   }
 
   /**
@@ -711,12 +723,9 @@
     },
     tryResumeSession() {
       if (!state.socket || !state.connected || state.resumeInFlight) return;
+      if (state.currentRoom && state.currentRoom.id) return;
       const session = loadRoomSession();
       if (!session) return;
-      if (session.socketBase && state.socketBase && session.socketBase !== state.socketBase) {
-        clearRoomSession();
-        return;
-      }
       state.resumeInFlight = true;
       state.socket.emit('resumeRoom', {
         roomId: session.roomId,
@@ -775,6 +784,10 @@
         if (!room) {
           clearRoomSession();
         }
+        const inferredRole = inferRoleFromRoom(room);
+        if (inferredRole) {
+          state.role = inferredRole;
+        }
         if (room && Array.isArray(room.selectedTerritories)) {
           selectionController.applyServerSelection(room.selectedTerritories);
         }
@@ -831,7 +844,12 @@
     },
     setReady() {
       if (!state.currentRoom) return;
-      const roleKey = state.role === 'defender' ? 'defenderReady' : 'attackerReady';
+      const effectiveRole = inferRoleFromRoom(state.currentRoom) || state.role;
+      if (effectiveRole !== 'defender' && effectiveRole !== 'attacker') {
+        alert('Role is not synced yet. Wait a moment and try again.');
+        return;
+      }
+      const roleKey = effectiveRole === 'defender' ? 'defenderReady' : 'attackerReady';
       const nextReady = !state.currentRoom[roleKey];
       state.socket.emit('setReady', { ready: nextReady }, function (resp) {
         if (!resp || !resp.ok) {
