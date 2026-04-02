@@ -34,6 +34,7 @@
     territoryByName: new Map(),
     layerByName: new Map(),
     routeLayer: null,
+    hqMarker: null,
     selectedTerritories: new Set(),
     socket: null,
     currentRoom: null,
@@ -76,6 +77,8 @@
     upgradeModal: document.getElementById('upgradeModal'),
     upgradeModalCloseBtn: document.getElementById('upgradeModalCloseBtn'),
     upgradeTerritorySelect: document.getElementById('upgradeTerritorySelect'),
+    hqTerritorySelect: document.getElementById('hqTerritorySelect'),
+    setHqBtn: document.getElementById('setHqBtn'),
     upgradeRoleHint: document.getElementById('upgradeRoleHint'),
     upgradeDamageMeta: document.getElementById('upgradeDamageMeta'),
     upgradeAttackSpeedMeta: document.getElementById('upgradeAttackSpeedMeta'),
@@ -388,14 +391,37 @@
   }
 
   function styleForTerritoryName(name) {
+    const room = state.currentRoom;
+    const hq = room && Array.isArray(room.selectedTerritories) && room.selectedTerritories.length
+      ? (room.hqTerritory || room.selectedTerritories[0] || '')
+      : '';
+    const isHq = !!hq && name === hq;
     const selected = state.selectedTerritories.has(name);
     if (selected) {
+      if (isHq) {
+        return {
+          color: '#facc15',
+          weight: 3,
+          fillColor: '#3b82f6',
+          fillOpacity: 0.55,
+          opacity: 1
+        };
+      }
       return {
         color: '#4da3ff',
         weight: 2,
         fillColor: '#3b82f6',
         fillOpacity: 0.5,
         opacity: 1
+      };
+    }
+    if (isHq) {
+      return {
+        color: '#facc15',
+        weight: 2.5,
+        fillColor: '#fde68a',
+        fillOpacity: 0.3,
+        opacity: 0.95
       };
     }
     return {
@@ -417,6 +443,7 @@
     state.layerByName.forEach(function (_layer, name) {
       updateLayerStyle(name);
     });
+    renderHqMarker();
     renderTradeRoutesOverlay();
   }
 
@@ -488,6 +515,40 @@
         }).addTo(state.routeLayer);
       }
     });
+  }
+
+  function ensureHqIcon() {
+    return L.divIcon({
+      className: 'eco-war-hq-icon',
+      html: '<div style="font-size:18px; text-shadow:0 1px 3px #000;">👑</div>',
+      iconSize: [20, 20],
+      iconAnchor: [10, 10]
+    });
+  }
+
+  function renderHqMarker() {
+    const room = state.currentRoom;
+    const hq = room && Array.isArray(room.selectedTerritories) && room.selectedTerritories.length
+      ? (room.hqTerritory || room.selectedTerritories[0] || '')
+      : '';
+    if (!hq || !state.map || !state.territoryByName.has(hq)) {
+      if (state.hqMarker) {
+        state.map.removeLayer(state.hqMarker);
+        state.hqMarker = null;
+      }
+      return;
+    }
+    const center = territoryCenterByName(hq);
+    if (!center) return;
+    if (!state.hqMarker) {
+      state.hqMarker = L.marker(center, {
+        icon: ensureHqIcon(),
+        interactive: false,
+        keyboard: false
+      }).addTo(state.map);
+    } else {
+      state.hqMarker.setLatLng(center);
+    }
   }
 
   function toggleTerritory(name) {
@@ -591,8 +652,12 @@
       els.upgradeTerritorySelect.innerHTML = selected.map(function (name) {
         return '<option value="' + name + '">' + name + '</option>';
       }).join('');
+      els.hqTerritorySelect.innerHTML = selected.map(function (name) {
+        return '<option value="' + name + '">' + name + '</option>';
+      }).join('');
       if (selected.length === 0) {
         state.selectedUpgradeTerritory = '';
+        els.setHqBtn.disabled = true;
         return;
       }
       if (prev && selected.indexOf(prev) !== -1) {
@@ -601,6 +666,19 @@
         state.selectedUpgradeTerritory = selected[0];
       }
       els.upgradeTerritorySelect.value = state.selectedUpgradeTerritory;
+      const serverHq = room && room.hqTerritory && selected.indexOf(room.hqTerritory) !== -1
+        ? room.hqTerritory
+        : selected[0];
+      els.hqTerritorySelect.value = serverHq;
+    },
+    canSetHq() {
+      const room = state.currentRoom;
+      if (!room || (room.status !== 'prep' && room.status !== 'playing')) return false;
+      if (state.role !== 'defender') return false;
+      const selected = Array.isArray(room.selectedTerritories) ? room.selectedTerritories : [];
+      const target = els.hqTerritorySelect.value || '';
+      if (!target || selected.indexOf(target) === -1) return false;
+      return true;
     },
     getSelectedUpgradeLevel(category) {
       const room = state.currentRoom || {};
@@ -680,6 +758,7 @@
         els.upgradeHealthBtn.disabled = true;
         els.upgradeDefenseBtn.disabled = true;
       }
+      els.setHqBtn.disabled = !this.canSetHq();
     },
     open() {
       if (!state.currentRoom || (state.currentRoom.status !== 'playing' && state.currentRoom.status !== 'prep')) return;
@@ -707,6 +786,23 @@
           return;
         }
         playSfx('success');
+      });
+    },
+    setHqTerritory() {
+      if (!state.currentRoom) return;
+      if (!this.canSetHq()) {
+        alert('HQ can only be changed by defender during prep/playing.');
+        return;
+      }
+      const territoryName = (els.hqTerritorySelect.value || '').trim();
+      state.socket.emit('setHqTerritory', { territoryName }, function (resp) {
+        if (!resp || !resp.ok) {
+          alert((resp && resp.error) || 'Failed to set HQ.');
+          return;
+        }
+        setStatus('HQ moved to ' + resp.hqTerritory);
+        pushUpgradeNotice('HQ moved to ' + resp.hqTerritory);
+        upgradeMenuController.renderNotices();
       });
     }
   };
@@ -952,6 +1048,12 @@
     els.upgradeTerritorySelect.addEventListener('change', function () {
       state.selectedUpgradeTerritory = els.upgradeTerritorySelect.value || '';
       upgradeMenuController.render();
+    });
+    els.hqTerritorySelect.addEventListener('change', function () {
+      upgradeMenuController.render();
+    });
+    els.setHqBtn.addEventListener('click', function () {
+      upgradeMenuController.setHqTerritory();
     });
 
     els.upgradeDamageBtn.addEventListener('click', function () {
