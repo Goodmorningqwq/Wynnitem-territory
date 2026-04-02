@@ -32,6 +32,8 @@
     defense: 'fish',
     storage: 'wood'
   };
+  const PRODUCTION_MULT_MIN = 0.5;
+  const PRODUCTION_MULT_MAX = 1.5;
 
   const state = {
     map: null,
@@ -68,6 +70,12 @@
     countdownText: document.getElementById('countdownText'),
     readyStateText: document.getElementById('readyStateText'),
     selectionCountText: document.getElementById('selectionCountText'),
+    tickIntervalText: document.getElementById('tickIntervalText'),
+    routeModeRow: document.getElementById('routeModeRow'),
+    productionBuffRow: document.getElementById('productionBuffRow'),
+    productionMultText: document.getElementById('productionMultText'),
+    prodMultDownBtn: document.getElementById('prodMultDownBtn'),
+    prodMultUpBtn: document.getElementById('prodMultUpBtn'),
     territoryList: document.getElementById('territoryList'),
     readyBtn: document.getElementById('readyBtn'),
     resourcesPanel: document.getElementById('resourcesPanel'),
@@ -201,6 +209,15 @@
     state.tickCountdownTimer = setInterval(paint, 250);
   }
 
+  /**
+   * @param {object} row
+   * @returns {string[]}
+   */
+  function readTradeRoutes(row) {
+    const tr = row['Trading Routes'] || row.tradingRoutes || row.trade_routes;
+    return Array.isArray(tr) ? tr.map(String) : [];
+  }
+
   const territoryDataAdapter = {
     async loadStatic() {
       const res = await fetch(STATIC_TERRITORIES_URL);
@@ -212,11 +229,7 @@
       Object.keys(staticData).forEach(function (name) {
         const row = staticData[name] || {};
         const loc = row.Location || row.location;
-        const tradeRoutes = Array.isArray(row.trade_routes)
-          ? row.trade_routes.map(String)
-          : Array.isArray(row['Trading Routes'])
-            ? row['Trading Routes'].map(String)
-            : [];
+        const tradeRoutes = readTradeRoutes(row);
         if (!loc || !loc.start || !loc.end) return;
         const x1 = loc.start[0];
         const z1 = loc.start[1];
@@ -574,7 +587,7 @@
     const hq = room.hqTerritory || room.selectedTerritories[0];
     if (!hq) return;
     const selectedSet = new Set(room.selectedTerritories);
-    const drawn = new Set();
+    const pathEdgeKeys = new Set();
     room.selectedTerritories.forEach(function (name) {
       const path = findRouteToHq(name, hq);
       if (!path || path.length < 2) return;
@@ -583,16 +596,30 @@
         const b = path[i + 1];
         if (!selectedSet.has(a) || !selectedSet.has(b)) continue;
         const key = a < b ? a + '|' + b : b + '|' + a;
+        pathEdgeKeys.add(key);
+      }
+    });
+    const drawn = new Set();
+    selectedSet.forEach(function (name) {
+      const t = state.territoryByName.get(name);
+      if (!t || !Array.isArray(t.tradeRoutes)) return;
+      for (let i = 0; i < t.tradeRoutes.length; i++) {
+        const other = t.tradeRoutes[i];
+        if (!selectedSet.has(other) || !state.territoryByName.has(other)) continue;
+        const a = name;
+        const b = other;
+        const key = a < b ? a + '|' + b : b + '|' + a;
         if (drawn.has(key)) continue;
         drawn.add(key);
         const start = territoryCenterByName(a);
         const end = territoryCenterByName(b);
         if (!start || !end) continue;
+        const onHqPath = pathEdgeKeys.has(key);
         L.polyline([start, end], {
-          color: '#8ec5ff',
-          weight: 2,
-          opacity: 0.75,
-          dashArray: '4 4'
+          color: onHqPath ? '#ffe08a' : '#8ec5ff',
+          weight: onHqPath ? 3 : 2,
+          opacity: onHqPath ? 0.95 : 0.55,
+          dashArray: onHqPath ? null : '4 4'
         }).addTo(state.routeLayer);
       }
     });
@@ -675,6 +702,30 @@
       els.gameStatusText.textContent = 'Status: ' + room.status;
       els.readyStateText.textContent =
         'Defender ready: ' + room.defenderReady + ' | Attacker ready: ' + room.attackerReady;
+      const tickMs = typeof room.tickIntervalMs === 'number' ? room.tickIntervalMs : 60000;
+      if (els.tickIntervalText) {
+        els.tickIntervalText.textContent =
+          'Resource tick: ' + Math.round(tickMs / 1000) + 's (server)';
+      }
+      const routeMode = room.routeMode === 'cheapest' ? 'cheapest' : 'fastest';
+      const routeInputs = document.querySelectorAll('input[name="routeMode"]');
+      for (let ri = 0; ri < routeInputs.length; ri++) {
+        const inp = routeInputs[ri];
+        inp.checked = inp.value === routeMode;
+        inp.disabled = state.role !== 'defender';
+      }
+      const prodMult = Number(room.productionMultiplier);
+      const prodOk = Number.isFinite(prodMult) ? prodMult : 1;
+      if (els.productionMultText) {
+        els.productionMultText.textContent = Math.round(prodOk * 100) + '%';
+      }
+      const canEcoSettings = state.role === 'defender' && !!room.id;
+      if (els.prodMultDownBtn) {
+        els.prodMultDownBtn.disabled = !canEcoSettings || prodOk <= PRODUCTION_MULT_MIN + 0.001;
+      }
+      if (els.prodMultUpBtn) {
+        els.prodMultUpBtn.disabled = !canEcoSettings || prodOk >= PRODUCTION_MULT_MAX - 0.001;
+      }
       if (typeof room.prepSecondsRemaining === 'number' && room.status === 'prep') {
         els.countdownText.textContent = 'Prep countdown: ' + room.prepSecondsRemaining + 's';
       } else {
@@ -1155,6 +1206,42 @@
       if (!state.currentRoom) return;
       socketController.setReady();
     });
+
+    document.querySelectorAll('input[name="routeMode"]').forEach(function (radio) {
+      radio.addEventListener('change', function () {
+        if (state.role !== 'defender' || !state.socket || !state.currentRoom || !this.checked) return;
+        state.socket.emit('eco:setRouteMode', { routeMode: this.value }, function (resp) {
+          if (!resp || !resp.ok) {
+            alert((resp && resp.error) || 'Failed to set route mode.');
+          }
+        });
+      });
+    });
+
+    function adjustProductionMult(delta) {
+      if (state.role !== 'defender' || !state.socket || !state.currentRoom) return;
+      const cur = Number(state.currentRoom.productionMultiplier) || 1;
+      const next = Math.max(
+        PRODUCTION_MULT_MIN,
+        Math.min(PRODUCTION_MULT_MAX, Math.round((cur + delta) * 100) / 100)
+      );
+      state.socket.emit('eco:setProductionMultiplier', { multiplier: next }, function (resp) {
+        if (!resp || !resp.ok) {
+          alert((resp && resp.error) || 'Failed to set production buff.');
+        }
+      });
+    }
+
+    if (els.prodMultDownBtn) {
+      els.prodMultDownBtn.addEventListener('click', function () {
+        adjustProductionMult(-0.1);
+      });
+    }
+    if (els.prodMultUpBtn) {
+      els.prodMultUpBtn.addEventListener('click', function () {
+        adjustProductionMult(0.1);
+      });
+    }
 
     els.copyCodeBtn.addEventListener('click', async function () {
       const code = els.roomCodeText.textContent || '';

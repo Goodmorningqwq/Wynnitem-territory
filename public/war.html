@@ -339,6 +339,16 @@
     <div id="countdownText" class="meta">Prep countdown: -</div>
     <div id="readyStateText" class="meta">Defender ready: false | Attacker ready: false</div>
     <div id="selectionCountText" class="meta">Selected territories: 0</div>
+    <div id="tickIntervalText" class="meta">Resource tick: —</div>
+    <div id="routeModeRow" class="meta" style="line-height:1.5;">Trade routing (defender):<br>
+      <label><input type="radio" name="routeMode" value="fastest"> Fewest hops</label>
+      <label style="margin-left:8px;"><input type="radio" name="routeMode" value="cheapest"> Lowest cost</label>
+    </div>
+    <div id="productionBuffRow" class="meta" style="margin-top:6px;">
+      Guild production buff: <span id="productionMultText">100%</span>
+      <button type="button" id="prodMultDownBtn" class="btn" style="padding:4px 8px; margin-left:6px;">−10%</button>
+      <button type="button" id="prodMultUpBtn" class="btn" style="padding:4px 8px;">+10%</button>
+    </div>
     <ul id="territoryList"></ul>
     <button id="readyBtn" class="btn" disabled>Ready</button>
     <div id="resourcesPanel">
