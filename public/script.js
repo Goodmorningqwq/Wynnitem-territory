@@ -470,6 +470,13 @@
     return all[name] || null;
   }
 
+  function getStorageCapacity(level, isHq) {
+    const base = 500000;
+    const multiplier = 1 + (Math.max(0, Math.min(11, Number(level) || 0)) * 0.25);
+    const hqMultiplier = isHq ? 10 : 1;
+    return Math.floor(base * multiplier * hqMultiplier);
+  }
+
   function getMainResourceKey(name) {
     const territory = state.territoryByName.get(name);
     if (!territory) return 'wood';
@@ -505,19 +512,41 @@
     });
   }
 
+  function buildSelectedAdjacency(selectedSet) {
+    const adjacency = new Map();
+    selectedSet.forEach(function (name) {
+      adjacency.set(name, new Set());
+    });
+    selectedSet.forEach(function (fromName) {
+      const territory = state.territoryByName.get(fromName);
+      const neighbors = territory && Array.isArray(territory.tradeRoutes) ? territory.tradeRoutes : [];
+      for (let i = 0; i < neighbors.length; i++) {
+        const toName = neighbors[i];
+        if (!selectedSet.has(toName)) continue;
+        adjacency.get(fromName).add(toName);
+        adjacency.get(toName).add(fromName);
+      }
+    });
+    return adjacency;
+  }
+
   function findRouteToHq(fromName, hqName) {
     if (!fromName || !hqName) return null;
     if (fromName === hqName) return [hqName];
+    const room = state.currentRoom;
+    const selected = room && Array.isArray(room.selectedTerritories) ? room.selectedTerritories : [];
+    const selectedSet = new Set(selected);
+    if (!selectedSet.has(fromName) || !selectedSet.has(hqName)) return null;
+    const adjacency = buildSelectedAdjacency(selectedSet);
     const queue = [fromName];
     const visited = new Set([fromName]);
     const parent = new Map();
     while (queue.length) {
       const current = queue.shift();
-      const row = state.territoryByName.get(current);
-      const neighbors = row && Array.isArray(row.tradeRoutes) ? row.tradeRoutes : [];
+      const neighbors = Array.from(adjacency.get(current) || []);
       for (let i = 0; i < neighbors.length; i++) {
         const next = neighbors[i];
-        if (!state.territoryByName.has(next) || visited.has(next)) continue;
+        if (visited.has(next)) continue;
         visited.add(next);
         parent.set(next, current);
         if (next === hqName) {
@@ -785,6 +814,38 @@
         return '<li>' + m + '</li>';
       }).join('');
     },
+    renderStorageDashboard(room) {
+      const container = document.getElementById('storageDashboardList');
+      if (!container) return;
+      if (!room || !Array.isArray(room.selectedTerritories) || room.selectedTerritories.length === 0) {
+        container.innerHTML = '<li class="meta">No selected territories.</li>';
+        return;
+      }
+      const hq = room.hqTerritory || room.selectedTerritories[0] || '';
+      const upgrades = room.territoryUpgrades || {};
+      const perStorage = room.perTerritoryStorage || {};
+      container.innerHTML = room.selectedTerritories.map(function (name) {
+        const row = perStorage[name] || { emeralds: 0, wood: 0, ore: 0, crops: 0, fish: 0 };
+        const level = upgrades[name] && Number.isFinite(upgrades[name].storage)
+          ? parseInt(upgrades[name].storage || 0, 10) || 0
+          : 0;
+        const isHq = name === hq;
+        const cap = getStorageCapacity(level, isHq);
+        const hqTag = isHq ? ' <strong>(HQ)</strong>' : '';
+        return (
+          '<li style="margin-bottom:8px;">' +
+          '<div><strong>' + name + '</strong>' + hqTag + ' · ST Lv' + level + '</div>' +
+          '<div style="font-size:12px;opacity:0.9;">' +
+          'E: ' + fmt(row.emeralds) + '/' + fmt(cap) + ' | ' +
+          'W: ' + fmt(row.wood) + '/' + fmt(cap) + ' | ' +
+          'O: ' + fmt(row.ore) + '/' + fmt(cap) + ' | ' +
+          'C: ' + fmt(row.crops) + '/' + fmt(cap) + ' | ' +
+          'F: ' + fmt(row.fish) + '/' + fmt(cap) +
+          '</div>' +
+          '</li>'
+        );
+      }).join('');
+    },
     renderReadOnlyList(room) {
       if (!room || room.status !== 'playing') {
         els.upgradeReadOnlyList.innerHTML = '';
@@ -813,6 +874,7 @@
       this.renderCategory('health', els.upgradeHealthCard, els.upgradeHealthBadge, els.upgradeHealthBar, els.upgradeHealthMeta, els.upgradeHealthBtn);
       this.renderCategory('defense', els.upgradeDefenseCard, els.upgradeDefenseBadge, els.upgradeDefenseBar, els.upgradeDefenseMeta, els.upgradeDefenseBtn);
       this.renderCategory('storage', els.upgradeStorageCard, els.upgradeStorageBadge, els.upgradeStorageBar, els.upgradeStorageMeta, els.upgradeStorageBtn);
+      this.renderStorageDashboard(room);
       this.renderNotices();
       if (!room || (room.status !== 'playing' && room.status !== 'prep')) {
         els.upgradeDamageBtn.disabled = true;
