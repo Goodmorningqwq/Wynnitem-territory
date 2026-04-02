@@ -12,7 +12,6 @@
   const MAP_SCALE_Y = 1;
   const MAP_BG_SCALE_X = 0.803;
   const MAP_BG_SCALE_Y = 0.966;
-  const LIVE_TERRITORIES_URL = '/api/territories';
   const SOCKET_DEV_PORT = 3001;
   const FLIP_Z = true;
   const UPGRADE_COSTS = {
@@ -33,6 +32,7 @@
     geo: null,
     territoryByName: new Map(),
     layerByName: new Map(),
+    routeLayer: null,
     selectedTerritories: new Set(),
     socket: null,
     currentRoom: null,
@@ -196,6 +196,11 @@
       Object.keys(staticData).forEach(function (name) {
         const row = staticData[name] || {};
         const loc = row.Location || row.location;
+        const tradeRoutes = Array.isArray(row.trade_routes)
+          ? row.trade_routes.map(String)
+          : Array.isArray(row['Trading Routes'])
+            ? row['Trading Routes'].map(String)
+            : [];
         if (!loc || !loc.start || !loc.end) return;
         const x1 = loc.start[0];
         const z1 = loc.start[1];
@@ -207,7 +212,8 @@
           maxX: Math.max(x1, x2),
           minZ: Math.min(z1, z2),
           maxZ: Math.max(z1, z2),
-          guildName: ''
+          guildName: '',
+          tradeRoutes
         });
       });
       return list;
@@ -233,77 +239,10 @@
     return L.latLngBounds([[minLat, minLng], [maxLat, maxLng]]);
   }
 
-  function normalizeKey(name) {
-    return String(name)
-      .trim()
-      .replace(/\u2019/g, "'")
-      .replace(/\u2018/g, "'")
-      .toLowerCase();
-  }
-
-  /**
-   * @param {object} liveData
-   * @returns {Map<string, string>}
-   */
-  function buildLiveKeyMap(liveData) {
-    const map = new Map();
-    Object.keys(liveData).forEach(function (k) {
-      map.set(normalizeKey(k), k);
+  function applyLiveOwnership() {
+    state.territoryByName.forEach(function (t) {
+      t.guildName = '';
     });
-    return map;
-  }
-
-  /**
-   * @param {string} guildName
-   * @returns {string}
-   */
-  function guildColor(guildName) {
-    const label = guildName && String(guildName).trim() ? guildName : 'Unclaimed';
-    let h = 0;
-    for (let i = 0; i < label.length; i++) {
-      h = (h * 31 + label.charCodeAt(i)) >>> 0;
-    }
-    const hue = h % 360;
-    return 'hsl(' + hue + ', 62%, 52%)';
-  }
-
-  /**
-   * @param {object | null} row
-   * @returns {string}
-   */
-  function guildNameFromLiveRow(row) {
-    if (!row || !row.guild || !row.guild.name) return '';
-    const n = String(row.guild.name).trim();
-    return n;
-  }
-
-  /**
-   * @param {string} name
-   * @param {object} liveData
-   * @param {Map<string, string>} liveKeyMap
-   * @returns {object | null}
-   */
-  function resolveLiveRow(name, liveData, liveKeyMap) {
-    if (liveData[name]) return liveData[name];
-    const canon = liveKeyMap.get(normalizeKey(name));
-    return canon ? liveData[canon] : null;
-  }
-
-  async function applyLiveOwnership() {
-    try {
-      const res = await fetch(LIVE_TERRITORIES_URL);
-      if (!res.ok) throw new Error('Live territory API ' + res.status);
-      const live = await res.json();
-      const liveKeyMap = buildLiveKeyMap(live);
-      state.territoryByName.forEach(function (t) {
-        const row = resolveLiveRow(t.name, live, liveKeyMap);
-        t.guildName = guildNameFromLiveRow(row);
-      });
-    } catch (_e) {
-      state.territoryByName.forEach(function (t) {
-        t.guildName = '';
-      });
-    }
     renderSelectionLocally();
   }
 
@@ -417,24 +356,12 @@
         opacity: 1
       };
     }
-    const t = state.territoryByName.get(name);
-    const g = t && t.guildName ? String(t.guildName).trim() : '';
-    if (!g) {
-      return {
-        color: 'rgba(180, 180, 190, 0.85)',
-        weight: 1,
-        fillColor: '#f5f5f7',
-        fillOpacity: 0.22,
-        opacity: 0.85
-      };
-    }
-    const base = guildColor(g);
     return {
-      color: base,
+      color: 'rgba(180, 180, 190, 0.85)',
       weight: 1,
-      fillColor: base,
-      fillOpacity: 0.34,
-      opacity: 0.9
+      fillColor: '#f5f5f7',
+      fillOpacity: 0.22,
+      opacity: 0.85
     };
   }
 
@@ -447,6 +374,77 @@
   function renderSelectionLocally() {
     state.layerByName.forEach(function (_layer, name) {
       updateLayerStyle(name);
+    });
+    renderTradeRoutesOverlay();
+  }
+
+  function territoryCenterByName(name) {
+    const t = state.territoryByName.get(name);
+    if (!t) return null;
+    return worldToLayer((t.minX + t.maxX) / 2, (t.minZ + t.maxZ) / 2);
+  }
+
+  function findRouteToHq(fromName, hqName) {
+    if (!fromName || !hqName) return null;
+    if (fromName === hqName) return [hqName];
+    const queue = [fromName];
+    const visited = new Set([fromName]);
+    const parent = new Map();
+    while (queue.length) {
+      const current = queue.shift();
+      const row = state.territoryByName.get(current);
+      const neighbors = row && Array.isArray(row.tradeRoutes) ? row.tradeRoutes : [];
+      for (let i = 0; i < neighbors.length; i++) {
+        const next = neighbors[i];
+        if (!state.territoryByName.has(next) || visited.has(next)) continue;
+        visited.add(next);
+        parent.set(next, current);
+        if (next === hqName) {
+          const path = [hqName];
+          let cursor = hqName;
+          while (parent.has(cursor)) {
+            cursor = parent.get(cursor);
+            path.push(cursor);
+            if (cursor === fromName) break;
+          }
+          path.reverse();
+          return path;
+        }
+        queue.push(next);
+      }
+    }
+    return null;
+  }
+
+  function renderTradeRoutesOverlay() {
+    if (!state.routeLayer) return;
+    state.routeLayer.clearLayers();
+    const room = state.currentRoom;
+    if (!room || !Array.isArray(room.selectedTerritories) || room.selectedTerritories.length === 0) return;
+    const hq = room.hqTerritory || room.selectedTerritories[0];
+    if (!hq) return;
+    const selectedSet = new Set(room.selectedTerritories);
+    const drawn = new Set();
+    room.selectedTerritories.forEach(function (name) {
+      const path = findRouteToHq(name, hq);
+      if (!path || path.length < 2) return;
+      for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i];
+        const b = path[i + 1];
+        if (!selectedSet.has(a) || !selectedSet.has(b)) continue;
+        const key = a < b ? a + '|' + b : b + '|' + a;
+        if (drawn.has(key)) continue;
+        drawn.add(key);
+        const start = territoryCenterByName(a);
+        const end = territoryCenterByName(b);
+        if (!start || !end) continue;
+        L.polyline([start, end], {
+          color: '#8ec5ff',
+          weight: 2,
+          opacity: 0.75,
+          dashArray: '4 4'
+        }).addTo(state.routeLayer);
+      }
     });
   }
 
@@ -497,15 +495,16 @@
       }
       const showResources = room.status === 'prep' || room.status === 'playing' || state.lastTickPayload;
       els.resourcesPanel.style.display = showResources ? 'block' : 'none';
-      const showUpgradeButton = room.status === 'playing' && state.role === 'defender';
+      const showUpgradeButton = (room.status === 'prep' || room.status === 'playing') && state.role === 'defender';
       els.upgradeMenuBtn.style.display = showUpgradeButton ? 'block' : 'none';
-      const showReadOnlyUpgrades = room.status === 'playing';
+      const showReadOnlyUpgrades = room.status === 'prep' || room.status === 'playing';
       els.upgradeReadOnlyPanel.style.display = showReadOnlyUpgrades ? 'block' : 'none';
       upgradeMenuController.renderReadOnlyList(room);
       upgradeMenuController.hydrateTerritoryOptions(room);
       upgradeMenuController.render();
       this.renderSelectionSummary();
       this.updateReadyButton(room);
+      renderTradeRoutesOverlay();
     },
     renderSelectionSummary() {
       const list = selectedArray();
@@ -572,15 +571,12 @@
     },
     canUpgrade(category) {
       const room = state.currentRoom;
-      if (!room || room.status !== 'playing') return false;
+      if (!room || (room.status !== 'playing' && room.status !== 'prep')) return false;
       if (state.role !== 'defender') return false;
       if (!state.selectedUpgradeTerritory) return false;
       const level = this.getSelectedUpgradeLevel(category);
       if (level >= 11) return false;
-      const cost = UPGRADE_COSTS[category][level + 1] || 0;
-      const resourceKey = UPGRADE_RESOURCE_BY_CATEGORY[category];
-      const resources = room.defenderResources || {};
-      return (resources.emeralds || 0) >= cost && (resources[resourceKey] || 0) >= cost;
+      return true;
     },
     renderCategory(category, cardEl, badgeEl, barEl, metaEl, btnEl) {
       const level = this.getSelectedUpgradeLevel(category);
@@ -589,7 +585,7 @@
       const maxed = level >= 11;
       metaEl.textContent = level >= 11
         ? 'Level 11 · Maxed'
-        : 'Level ' + level + ' · Next cost ' + nextCost + ' ' + UPGRADE_RESOURCE_BY_CATEGORY[category] + ' + ' + nextCost + ' emeralds';
+        : 'Level ' + level + ' · Hourly drain ' + nextCost + ' ' + UPGRADE_RESOURCE_BY_CATEGORY[category] + ' (inactive when insufficient)';
       btnEl.disabled = !can;
       badgeEl.textContent = 'Lv' + level;
       badgeEl.classList.toggle('maxed', maxed);
@@ -644,7 +640,7 @@
       }
     },
     open() {
-      if (!state.currentRoom || state.currentRoom.status !== 'playing') return;
+      if (!state.currentRoom || (state.currentRoom.status !== 'playing' && state.currentRoom.status !== 'prep')) return;
       els.upgradeModal.style.display = 'flex';
       this.render();
     },
@@ -807,11 +803,12 @@
     });
     L.imageOverlay(MAP_IMAGE_URL, overlayBounds).addTo(state.map);
     state.map.fitBounds(bounds);
+    state.routeLayer = L.layerGroup().addTo(state.map);
 
     const staticData = await territoryDataAdapter.loadStatic();
     const territories = territoryDataAdapter.parseTerritories(staticData);
     selectionController.initMapLayers(territories);
-    await applyLiveOwnership();
+    applyLiveOwnership();
   }
 
   function bindUi() {
