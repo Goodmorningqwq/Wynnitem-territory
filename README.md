@@ -32,12 +32,23 @@ The game server is a small Node app: folder **`server/`** with **`proxy.js`** (E
 
 1. Deploy that folder to **Railway**, **Render**, **Fly.io**, a VPS, or run locally: `cd server && npm install && npm start`. On Render, you can use the monorepo file `render-eco-war.yaml` as a Blueprint (`rootDir: server`).
 2. Use an **https** URL for production (e.g. `https://your-service.onrender.com`).
-3. In `public/war.html`, uncomment and set:
+3. In `public/war.html`, set your socket host:
 
    ```html
    <meta name="eco-war-socket-url" content="https://your-service.onrender.com">
    ```
 
    Or set `window.ECO_WAR_SOCKET_URL` before loading `script.js`.
+
+4. Optional auth hardening with backend token:
+
+   - In Render backend env, set `ECO_WAR_SHARED_TOKEN` to a strong random secret.
+   - In `public/war.html`, add:
+
+   ```html
+   <meta name="eco-war-shared-token" content="replace-with-your-token">
+   ```
+
+   Or set `window.ECO_WAR_SHARED_TOKEN` before `script.js`.
 
 On **localhost**, the client defaults to `http://127.0.0.1:3001` when the meta tag is omitted.

@@ -389,6 +389,23 @@
     return null;
   }
 
+  /**
+   * Optional shared token used for privileged room actions when backend enforces it.
+   * @returns {string}
+   */
+  function getEcoWarSharedToken() {
+    try {
+      const el = document.querySelector('meta[name="eco-war-shared-token"]');
+      if (el && el.content && String(el.content).trim()) {
+        return String(el.content).trim();
+      }
+    } catch (_e) {}
+    if (typeof window.ECO_WAR_SHARED_TOKEN === 'string' && window.ECO_WAR_SHARED_TOKEN.trim()) {
+      return window.ECO_WAR_SHARED_TOKEN.trim();
+    }
+    return '';
+  }
+
   function styleForTerritoryName(name) {
     const selected = state.selectedTerritories.has(name);
     if (selected) {
@@ -659,6 +676,7 @@
   const socketController = {
     init() {
       const socketBase = getEcoWarSocketBase();
+      const sharedToken = getEcoWarSharedToken();
       if (!socketBase) {
         state.connected = false;
         setStatus(
@@ -666,7 +684,11 @@
         );
         return;
       }
-      state.socket = io(socketBase, { transports: ['websocket', 'polling'] });
+      const socketOptions = { transports: ['websocket', 'polling'] };
+      if (sharedToken) {
+        socketOptions.auth = { token: sharedToken };
+      }
+      state.socket = io(socketBase, socketOptions);
       state.socket.on('connect', function () {
         state.connected = true;
         setStatus('Connected to room server');
