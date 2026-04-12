@@ -10,7 +10,10 @@
   const MAP_X_MIN = -2500, MAP_X_MAX = 2500;
   const MAP_Z_MIN = -6635, MAP_Z_MAX = 0;
   const MAP_OFFSET_X_PX = 75, MAP_OFFSET_Y_PX = -15;
-  const MAP_SCALE_X = 1, MAP_SCALE_Y = 1;
+  const MAP_SCALE_X    = 1.000;
+  const MAP_SCALE_Y    = 1.000;
+  const MAP_BG_SCALE_X = 0.803;   // map content covers 80.3% of image width
+  const MAP_BG_SCALE_Y = 0.966;   // map content covers 96.6% of image height
   const FLIP_Z = true;
   const SOCKET_DEV_PORT = 3001;
   const SESSION_KEY_PREFIX = 'ecoWarRoomSessionV2';
@@ -175,13 +178,23 @@
   // ─── Map Coordinate Helpers ──────────────────────────────────────────────────
   function worldToLayer(x, z) {
     const { imgW, imgH } = state.geo;
-    let nx = x < 0 ? 0.5 - 0.5 * (Math.abs(x) / Math.abs(MAP_X_MIN)) : 0.5 + 0.5 * (Math.abs(x) / Math.abs(MAP_X_MAX));
-    let ny = z <= 0 ? 1 - (Math.abs(z) / Math.abs(MAP_Z_MIN)) : 1 + (Math.abs(z) / Math.abs(MAP_Z_MAX));
+    // Normalise world coords to 0–1
+    let nx = x < 0
+      ? 0.5 - 0.5 * (Math.abs(x) / Math.abs(MAP_X_MIN))
+      : 0.5 + 0.5 * (Math.abs(x) / Math.abs(MAP_X_MAX));
+    let ny = z <= 0
+      ? 1 - (Math.abs(z) / Math.abs(MAP_Z_MIN))
+      : 1 + (Math.abs(z) / Math.abs(MAP_Z_MAX));
     nx = clamp01(nx); ny = clamp01(ny);
     if (FLIP_Z) ny = 1 - ny;
+    // Apply per-axis scale then map to the portion of the image that
+    // actually contains the Wynncraft map (BG_SCALE factors)
     const snx = 0.5 + (nx - 0.5) * MAP_SCALE_X;
     const sny = 0.5 + (ny - 0.5) * MAP_SCALE_Y;
-    return L.latLng(sny * imgH + MAP_OFFSET_Y_PX, snx * imgW + MAP_OFFSET_X_PX);
+    return L.latLng(
+      sny * (imgH * MAP_BG_SCALE_Y) + MAP_OFFSET_Y_PX,
+      snx * (imgW * MAP_BG_SCALE_X) + MAP_OFFSET_X_PX
+    );
   }
   function boundsFromWorldRect(t) {
     const corners = [
