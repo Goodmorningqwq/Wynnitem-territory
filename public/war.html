@@ -5,431 +5,371 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="eco-war-socket-url" content="https://wynnitem-territory.onrender.com">
   <meta name="eco-war-shared-token" content="158bc35aa8fb84050dbce0f5ec2d8811">
-  <title>1v1 Eco War Lobby</title>
+  <title>1v1 Eco War — Wynncraft Territory Simulation</title>
+  <meta name="description" content="1v1 Wynncraft guild territory economy war simulation — set up tower defenses, manage resources, and challenge a friend.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <style>
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background: #121018;
-      color: #efeff8;
+    /* ── Reset & Base ──────────────────────────────────────────────────────── */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d0d12; color: #efeff8; font-family: Arial, sans-serif; height: 100vh; overflow: hidden; }
+
+    /* ── Minecraft GUI Theme ───────────────────────────────────────────────── */
+    .mc-btn {
+      font-family: 'VT323', monospace; font-size: 18px; letter-spacing: 0.5px;
+      background: #9B9B9B; border: 2px solid #000;
+      box-shadow: inset -2px -2px 0 #373737, inset 2px 2px 0 #FFFFFFCC;
+      color: #FFFF55; text-shadow: 1px 1px #333; cursor: pointer; padding: 3px 12px;
+      transition: background 0.08s;
     }
+    .mc-btn:hover:not(:disabled) { background: #ADADAD; }
+    .mc-btn:active { box-shadow: inset 2px 2px 0 #373737, inset -2px -2px 0 #FFFFFFCC; }
+    .mc-btn:disabled { color: #888; cursor: not-allowed; background: #7a7a7a; }
+    .mc-btn.green  { background: #557833; color: #fff; box-shadow: inset -2px -2px 0 #2a4018, inset 2px 2px 0 #8fc84a; }
+    .mc-btn.green:hover:not(:disabled) { background: #669944; }
+    .mc-btn.red    { background: #883333; color: #fff; box-shadow: inset -2px -2px 0 #441818, inset 2px 2px 0 #cc5555; }
+    .mc-btn.blue   { background: #334488; color: #fff; box-shadow: inset -2px -2px 0 #181844, inset 2px 2px 0 #5577cc; }
+    .mc-btn.blue:hover:not(:disabled) { background: #445599; }
+
+    .mc-panel {
+      background: #C6B89E;
+      border: 3px solid #373737;
+      box-shadow: inset -2px -2px 0 #7a6a55, inset 2px 2px 0 #f0e8d8;
+    }
+    .mc-title { font-family: 'VT323', monospace; font-size: 22px; color: #3d2c18; text-shadow: 1px 1px 0 #f0c870; }
+    .mc-label { font-family: 'VT323', monospace; font-size: 16px; color: #3d2c18; }
+    .mc-small { font-family: 'VT323', monospace; font-size: 13px; color: #5a4020; }
+
+    .seg-bar { display: grid; grid-template-columns: repeat(11, 1fr); gap: 2px; }
+    .seg-bar span { height: 7px; background: #b8a870; display: block; border-radius: 1px; }
+    .seg-bar span.on { background: #4ec05a; }
+    .seg-bar span.on.maxed { background: #5a9ee0; }
+
+    /* ── Layout ───────────────────────────────────────────────────────────── */
     .topbar {
-      display: flex;
-      gap: 8px;
-      padding: 10px;
-      border-bottom: 1px solid #2d2640;
-      background: #1a1524;
-      align-items: center;
-      flex-wrap: wrap;
+      position: fixed; top: 0; left: 0; right: 0; height: 50px; z-index: 500;
+      display: flex; gap: 8px; padding: 8px 12px;
+      background: #1a1524; border-bottom: 2px solid #2d2640; align-items: center;
     }
-    .btn {
-      border: 1px solid #64518f;
-      background: #2a223d;
-      color: #fff;
-      padding: 8px 10px;
-      cursor: pointer;
-      border-radius: 6px;
+    .topbar-brand { font-family: 'VT323', monospace; font-size: 24px; color: #c9d0ff; margin-right: 8px; letter-spacing: 1px; }
+    .tb-btn {
+      border: 1px solid #64518f; background: #2a223d; color: #fff;
+      padding: 5px 12px; cursor: pointer; border-radius: 4px; font-size: 13px;
     }
-    .btn:disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
+    .tb-btn:hover { background: #342c4d; }
+    .tb-input {
+      border: 1px solid #64518f; background: #171321; color: #fff;
+      padding: 5px 10px; border-radius: 4px; width: 130px; font-size: 13px;
     }
-    .input {
-      border: 1px solid #64518f;
-      background: #171321;
-      color: #fff;
-      padding: 8px 10px;
-      border-radius: 6px;
-      width: 130px;
-    }
-    .status {
-      margin-left: auto;
-      color: #c9d0ff;
-      font-size: 14px;
-    }
+    #statusText { margin-left: auto; color: #c9d0ff; font-size: 12px; }
+
     #map {
-      width: 100%;
-      height: calc(100vh - 56px);
+      position: fixed; top: 50px; left: 0; right: 320px; bottom: 0;
       background: #0d0d14;
     }
-    #lobbyOverlay {
-      position: fixed;
-      right: 14px;
-      top: 70px;
-      width: 320px;
-      max-height: 70vh;
-      overflow: auto;
-      border: 1px solid #64518f;
-      background: rgba(22, 18, 30, 0.95);
-      border-radius: 10px;
-      padding: 10px;
-      display: none;
-      z-index: 999;
-    }
-    #lobbyOverlay h2 {
-      margin: 0 0 8px;
-      font-size: 17px;
-    }
-    .roomRow {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-    .roomCode {
-      font-size: 22px;
-      letter-spacing: 2px;
-      font-weight: bold;
-      color: #76f7ff;
-    }
-    #territoryList {
-      margin: 8px 0 10px;
-      padding: 0 0 0 18px;
+
+    /* ── Sidebar ──────────────────────────────────────────────────────────── */
+    #sidebar {
+      position: fixed; top: 50px; right: 0; width: 320px; bottom: 0;
+      background: rgba(18, 14, 28, 0.98); border-left: 2px solid #2d2640;
+      display: none; flex-direction: column; overflow-y: auto; padding: 12px;
       font-size: 13px;
     }
-    .meta {
-      font-size: 13px;
-      color: #d6d7e6;
-      margin-bottom: 6px;
+    .sb-section { margin-bottom: 10px; border-bottom: 1px solid #2d2640; padding-bottom: 10px; }
+    .sb-section:last-child { border-bottom: none; }
+    .sb-label { color: #8888bb; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 5px; }
+    .room-code { font-family: 'VT323', monospace; font-size: 30px; color: #76f7ff; letter-spacing: 3px; }
+    .status-badge {
+      display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: bold;
+      background: #1a3a1a; color: #6fde6f; border: 1px solid #3a5a3a;
     }
-    #resourcesPanel {
-      display: none;
-      margin-top: 10px;
-      border-top: 1px solid #3a3150;
-      padding-top: 8px;
+    .status-badge.prep    { background: #3a2a1a; color: #f0c050; border-color: #6a4a1a; }
+    .status-badge.playing { background: #3a1a1a; color: #f05040; border-color: #6a2020; }
+
+    /* Resources */
+    .res-row { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+    .res-icon { font-size: 14px; width: 18px; text-align: center; }
+    .res-bar-wrap { flex: 1; background: #1a1a2a; border-radius: 2px; height: 6px; overflow: hidden; }
+    .res-bar-fill { height: 100%; background: #4ec05a; transition: width 0.4s; }
+    .res-bar-fill.em { background: #f0c020; }
+    .res-val { font-size: 12px; font-weight: bold; color: #ddd; min-width: 72px; text-align: right; }
+
+    /* Tower stats (attacker) */
+    .tower-stats { background: #140010; border: 1px solid #442222; padding: 8px; border-radius: 3px; }
+    .ts-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
+    .ts-key { color: #ff9988; } .ts-val { color: #ffbbaa; font-weight: bold; }
+
+    /* Territory list */
+    .terr-item { display: flex; align-items: center; gap: 5px; padding: 2px 0; font-size: 12px; }
+    .terr-badge { font-size: 10px; color: #9999cc; background: #1a1530; padding: 1px 4px; border-radius: 3px; }
+
+    /* Ready */
+    #readyBtn { width: 100%; font-size: 22px; padding: 8px 0; margin-top: 6px; }
+    #prepCountdownText { font-family: 'VT323', monospace; font-size: 26px; color: #f0c050; text-align: center; display: none; }
+
+    /* ── Territory Menu Modal ──────────────────────────────────────────────── */
+    #tMenuOverlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.60);
+      display: none; align-items: center; justify-content: center; z-index: 1000;
     }
-    .resourceRow {
-      display: flex;
-      justify-content: space-between;
-      font-size: 13px;
-      margin-bottom: 4px;
+    #tMenuBox {
+      width: min(700px, calc(100vw - 20px));
+      max-height: calc(100vh - 40px);
+      display: flex; flex-direction: column;
     }
-    #tickCountdownText {
-      margin-top: 6px;
-      font-size: 12px;
-      color: #b7ffcf;
+    /* header */
+    .tmenu-hdr {
+      background: #C6B89E; border: 3px solid #373737; border-bottom: 2px solid #a09070;
+      box-shadow: inset -2px -2px 0 #7a6a55, inset 2px 2px 0 #f0e8d8;
+      padding: 8px 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     }
-    #tickMessages {
-      margin-top: 6px;
-      font-size: 12px;
-      color: #f8d9a7;
-      max-height: 90px;
-      overflow: auto;
-      padding-left: 16px;
+    .tmenu-select {
+      font-family: 'VT323', monospace; font-size: 16px;
+      background: #2d2418; color: #f0e0a0; border: 2px solid #373737;
+      padding: 3px 8px; flex: 1; max-width: 260px;
     }
-    #upgradeMenuBtn {
-      position: fixed;
-      right: 16px;
-      bottom: 16px;
-      z-index: 998;
-      display: none;
+    /* tabs */
+    .tmenu-tabs {
+      background: #b0a088; border-left: 3px solid #373737; border-right: 3px solid #373737;
+      display: flex; gap: 2px; padding: 4px 8px 0; overflow-x: auto;
     }
-    #upgradeModal {
-      position: fixed;
-      inset: 0;
-      display: none;
-      z-index: 1001;
-      background: rgba(0, 0, 0, 0.45);
-      align-items: center;
-      justify-content: center;
+    .tmenu-tab {
+      font-family: 'VT323', monospace; font-size: 15px;
+      background: #9B9080; color: #3d2c18; border: 2px solid #555; border-bottom: none;
+      padding: 3px 10px; cursor: pointer; white-space: nowrap;
     }
-    #upgradeModalContent {
-      width: min(720px, calc(100vw - 24px));
-      max-height: calc(100vh - 24px);
-      overflow: auto;
-      border: 2px solid #8f7b51;
-      background: #d4c39a;
-      color: #2e2516;
-      border-radius: 10px;
-      padding: 12px;
+    .tmenu-tab.active { background: #C6B89E; color: #1a0a00; border-color: #373737; }
+    .tmenu-tab:hover:not(.active) { background: #a89880; }
+    /* body */
+    .tmenu-body {
+      background: #C6B89E; border: 3px solid #373737; border-top: none;
+      box-shadow: inset -2px -2px 0 #7a6a55;
+      padding: 12px; overflow-y: auto; max-height: calc(100vh - 200px);
     }
-    .upgradeModalHeader {
-      position: sticky;
-      top: 0;
-      z-index: 2;
-      background: #d4c39a;
-      padding-bottom: 6px;
-      border-bottom: 1px solid #b89f6f;
-      margin-bottom: 8px;
+
+    /* ── Upgrade Cards ─────────────────────────────────────────────────────── */
+    .upg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .upg-card { background: #d4c8a8; border: 2px solid #9a8558; padding: 8px; }
+    .upg-card.maxed { background: #c0d4a8; border-color: #5a9a3a; }
+    .upg-hdr { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .upg-icon { font-size: 22px; }
+    .upg-name { font-family: 'VT323', monospace; font-size: 19px; color: #2e1a08; }
+    .upg-res  { font-family: 'VT323', monospace; font-size: 13px; color: #7a5030; margin-left: auto; }
+    .upg-lv   { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+    .lv-badge {
+      font-family: 'VT323', monospace; font-size: 16px;
+      background: #f8edcf; border: 1px solid #9a8558; padding: 0 6px;
+      min-width: 42px; text-align: center; color: #2e1a08;
     }
-    .upgradeTopIcons {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 8px;
-      margin-bottom: 10px;
+    .lv-badge.maxed { background: #c8f0a0; border-color: #5a9a3a; color: #1a4000; }
+    .upg-cost { font-family: 'VT323', monospace; font-size: 14px; color: #5a3820; margin-bottom: 4px; }
+    .stor-card { grid-column: span 2; background: #d4c8a8; border: 2px solid #9a8558; padding: 8px; }
+    .hq-sel-box { margin-top: 10px; background: #b8a870; border: 2px solid #9a8558; padding: 8px; }
+
+    /* ── Bonus Cards ───────────────────────────────────────────────────────── */
+    .bonus-list { display: flex; flex-direction: column; gap: 6px; }
+    .bonus-card { background: #d4c8a8; border: 2px solid #9a8558; padding: 8px; display: flex; align-items: center; gap: 10px; }
+    .bonus-icon-cell { font-size: 26px; width: 36px; text-align: center; }
+    .bonus-info { flex: 1; }
+    .bonus-name { font-family: 'VT323', monospace; font-size: 18px; color: #2e1a08; }
+    .bonus-desc { font-family: 'VT323', monospace; font-size: 13px; color: #614020; }
+    .bonus-divider { height: 1px; background: #9a8558; margin: 8px 0 6px; }
+    .bonus-sec-hdr { font-family: 'VT323', monospace; font-size: 16px; color: #3d2c18; margin-bottom: 6px; }
+
+    /* ── Storage Tab ───────────────────────────────────────────────────────── */
+    .hq-res-bar { margin-bottom: 8px; }
+    .hq-res-lbl { display: flex; justify-content: space-between; margin-bottom: 3px; }
+    .hq-res-lbl span { font-family: 'VT323', monospace; font-size: 16px; color: #2e1a08; }
+    .hq-res-lbl .over { color: #cc2222; font-weight: bold; }
+    .mc-bar-bg { background: #373737; border: 1px solid #222; height: 10px; }
+    .mc-bar-fill { height: 100%; background: #4ec05a; }
+    .mc-bar-fill.danger { background: #cc3333; }
+    .mc-bar-fill.warn   { background: #cc8833; }
+    .passthrough-box {
+      background: #b8d4b8; border: 2px solid #5a9a5a; padding: 8px; margin-bottom: 10px;
+      font-family: 'VT323', monospace; font-size: 15px; color: #1a4010;
     }
-    .upgradeIconSlot {
-      border: 1px solid #9a8558;
-      background: #e7d8b5;
-      border-radius: 6px;
-      padding: 6px;
-      text-align: center;
-      font-size: 20px;
+
+    /* ── Tax & Route Tab ───────────────────────────────────────────────────── */
+    .route-toggle { display: flex; gap: 8px; margin-bottom: 10px; }
+    .tax-row { margin-bottom: 10px; }
+    .tax-lbl { font-family: 'VT323', monospace; font-size: 16px; color: #3d2c18; margin-bottom: 4px; }
+    .tax-slider { width: 100%; accent-color: #4ec05a; cursor: pointer; }
+    .route-preview {
+      background: #b8a870; border: 2px solid #9a8558; padding: 8px;
+      font-family: 'VT323', monospace; font-size: 14px; color: #2e1a08; line-height: 1.6;
     }
-    .pixelIcon {
-      width: 28px;
-      height: 28px;
-      margin: 0 auto;
-      image-rendering: pixelated;
-      border: 1px solid rgba(0, 0, 0, 0.25);
-      background-color: #6f6654;
+
+    /* ── Info Tab ──────────────────────────────────────────────────────────── */
+    .info-row { display: flex; justify-content: space-between; margin-bottom: 7px; }
+    .info-key { font-family: 'VT323', monospace; font-size: 17px; color: #3d2c18; }
+    .info-val { font-family: 'VT323', monospace; font-size: 17px; color: #005500; font-weight: bold; }
+    .treasury-badge {
+      display: inline-block; background: #c89820; color: #fff;
+      font-family: 'VT323', monospace; font-size: 15px; padding: 1px 8px; border: 1px solid #a07010;
     }
-    .pixelIcon.core {
-      background-image: linear-gradient(135deg, #f0ece3 0 25%, #9a9487 25% 50%, #d4cec2 50% 75%, #6d6659 75% 100%);
+    .info-divider { height: 1px; background: #9a8558; margin: 8px 0; }
+
+    /* ── Attacker War Panel ─────────────────────────────────────────────────── */
+    #warPanel {
+      position: fixed; left: 12px; bottom: 12px; width: 290px;
+      display: none; z-index: 800; flex-direction: column;
     }
-    .pixelIcon.wand {
-      background-image: linear-gradient(45deg, transparent 40%, #d6a225 40% 60%, transparent 60%), linear-gradient(90deg, #3e3121, #8a6737);
+    .war-panel-hdr {
+      background: #1a0a0a; border: 2px solid #cc3333; border-bottom: none;
+      padding: 8px 12px;
     }
-    .pixelIcon.orbBlue {
-      border-radius: 50%;
-      background-image: radial-gradient(circle at 30% 30%, #a6dcff, #1f7ac2 70%);
+    .war-panel-title { font-family: 'VT323', monospace; font-size: 20px; color: #ff6666; }
+    .war-type-card {
+      background: rgba(18, 8, 8, 0.97); border: 2px solid #3a1a1a; border-top: none;
+      padding: 10px 12px; cursor: pointer;
     }
-    .pixelIcon.orbRed {
-      border-radius: 50%;
-      background-image: radial-gradient(circle at 30% 30%, #ffb0b0, #8a2020 70%);
+    .war-type-card.sel { border-left-color: #cc3333; border-right-color: #cc3333; background: rgba(30, 8, 8, 0.98); }
+    .war-type-card:hover:not(.sel) { background: rgba(25, 10, 10, 0.98); }
+    .war-type-card:last-child { border-bottom: 2px solid #cc3333; }
+    .wt-name { font-family: 'VT323', monospace; font-size: 18px; }
+    .wt-dps  { font-family: 'VT323', monospace; font-size: 13px; color: #aa6666; }
+    .wt-time { font-family: 'VT323', monospace; font-size: 15px; }
+    .wt-time.fast { color: #44ff44; } .wt-time.mid { color: #ffcc44; } .wt-time.slow { color: #ff4444; }
+
+    /* ── War Countdown ──────────────────────────────────────────────────────── */
+    #warCountdownBar {
+      position: fixed; top: 56px; left: 50%; transform: translateX(-50%);
+      font-family: 'VT323', monospace; font-size: 28px; color: #ff6666;
+      background: rgba(20, 5, 5, 0.95); border: 2px solid #cc2222;
+      padding: 5px 22px; display: none; z-index: 900;
     }
-    .pixelIcon.bonus {
-      background-image: linear-gradient(45deg, #a7f0ff, #3dc5df);
-      clip-path: polygon(50% 0%, 90% 30%, 70% 95%, 30% 95%, 10% 30%);
+
+    /* ── War Result Overlay ─────────────────────────────────────────────────── */
+    #warResultOverlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.82);
+      display: none; align-items: center; justify-content: center; z-index: 2000;
     }
-    .pixelIcon.sword {
-      background-image: linear-gradient(0deg, transparent 40%, #cfd4dd 40% 70%, transparent 70%), linear-gradient(90deg, transparent 45%, #cfd4dd 45% 55%, transparent 55%), linear-gradient(90deg, transparent 35%, #74552a 35% 65%, transparent 65%);
+    .war-result-box { width: min(500px, 94vw); }
+    .war-result-hdr {
+      font-family: 'VT323', monospace; font-size: 38px; text-align: center;
+      padding: 16px 20px; border: 3px solid; letter-spacing: 2px;
     }
-    .pixelIcon.armor {
-      background-image: linear-gradient(180deg, #8a6f3f, #4f3f25);
-    }
-    .pixelIcon.heart {
-      background-image: radial-gradient(circle at 30% 30%, #ff9c9c 0 40%, transparent 42%), radial-gradient(circle at 70% 30%, #ff9c9c 0 40%, transparent 42%), linear-gradient(#d53434, #8d1d1d);
-    }
-    .pixelIcon.book {
-      background-image: linear-gradient(90deg, #7f622c 0 20%, #efe2bf 20% 80%, #7f622c 80% 100%);
-    }
-    .upgradeIconLabel {
-      display: block;
-      font-size: 11px;
-      margin-top: 4px;
-      color: #594222;
-    }
-    .upgradeGrid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-      margin-top: 10px;
-    }
-    .upgradeCard {
-      border: 1px solid #9a8558;
-      background: #f1e4c5;
-      border-radius: 6px;
-      padding: 8px;
-    }
-    .upgradeCard h4 {
-      margin: 0 0 4px;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .upgradeMeta {
-      font-size: 12px;
-      margin-bottom: 6px;
-      color: #4b3a20;
-    }
-    .levelRow {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-bottom: 6px;
-      font-size: 11px;
-      color: #4b3a20;
-    }
-    .levelBadge {
-      border: 1px solid #9a8558;
-      background: #f8edcf;
-      border-radius: 4px;
-      padding: 1px 5px;
-      font-weight: 700;
-      min-width: 42px;
-      text-align: center;
-    }
-    .levelBadge.maxed {
-      background: #d2f0b5;
-      border-color: #7ca654;
-      color: #355420;
-    }
-    .segBar {
-      display: grid;
-      grid-template-columns: repeat(11, 1fr);
-      gap: 2px;
-      flex: 1;
-    }
-    .segBar span {
-      height: 7px;
-      border-radius: 2px;
-      background: #c8b891;
-    }
-    .segBar span.on {
-      background: #4ec05a;
-    }
-    .segBar.maxed span.on {
-      background: #2f8fda;
-    }
-    .upgradeCard.state-low {
-      border-color: #b87e55;
-      background: #f4dcc1;
-    }
-    .upgradeCard.state-max {
-      border-color: #75a451;
-      background: #e2f2d5;
-    }
-    #upgradeNoticeList {
-      margin: 8px 0 0;
-      padding-left: 16px;
-      font-size: 12px;
-      color: #5b3e12;
-      max-height: 120px;
-      overflow: auto;
-    }
-    .sfxToggleBtn {
-      margin-left: auto;
-      margin-right: 6px;
-    }
-    @media (max-width: 700px) {
-      #upgradeModalContent {
-        width: calc(100vw - 10px);
-        max-height: calc(100vh - 10px);
-        padding: 8px;
-      }
-      .upgradeGrid {
-        grid-template-columns: 1fr;
-      }
-      .upgradeCard h4 {
-        font-size: 13px;
-      }
-      #upgradeMenuBtn {
-        right: 10px;
-        bottom: 10px;
-      }
-      #lobbyOverlay {
-        right: 8px;
-        left: 8px;
-        width: auto;
-      }
+    .war-result-hdr.atk { color: #ff4444; background: #1a0000; border-color: #cc2222; }
+    .war-result-hdr.def { color: #44ff44; background: #001a00; border-color: #22aa22; }
+    .war-result-stats { background: #C6B89E; border: 3px solid #373737; border-top: none; padding: 12px 14px; }
+    .wr-stat { display: flex; justify-content: space-between; margin-bottom: 7px; }
+    .wr-key { font-family: 'VT323', monospace; font-size: 18px; color: #2e1a08; }
+    .wr-val { font-family: 'VT323', monospace; font-size: 18px; color: #003300; font-weight: bold; }
+    .war-result-foot { background: #C6B89E; border: 3px solid #373737; border-top: none; padding: 10px; text-align: center; }
+
+    @media (max-width: 750px) {
+      #map { right: 0; bottom: 180px; }
+      #sidebar { top: auto; bottom: 0; right: 0; left: 0; width: 100%; height: 180px; flex-direction: row; flex-wrap: wrap; overflow-x: auto; }
     }
   </style>
 </head>
 <body>
+  <!-- Top Bar -->
   <div class="topbar">
-    <button id="createGameBtn" class="btn">Create 1v1 Eco War Game</button>
-    <input id="joinCodeInput" class="input" maxlength="6" placeholder="6-digit code">
-    <button id="joinGameBtn" class="btn">Join Game</button>
-    <div id="statusText" class="status">Disconnected</div>
+    <span class="topbar-brand">⚔ Wynncraft Eco War</span>
+    <button id="createGameBtn" class="tb-btn">Create Game</button>
+    <input id="joinCodeInput" class="tb-input" maxlength="6" placeholder="6-digit code">
+    <button id="joinGameBtn" class="tb-btn">Join</button>
+    <button id="sfxToggleBtn" class="tb-btn" style="margin-left:4px;">SFX: ON</button>
+    <div id="statusText">Disconnected</div>
   </div>
 
+  <!-- Map -->
   <div id="map"></div>
 
-  <div id="lobbyOverlay">
-    <h2>Room Lobby</h2>
-    <div class="roomRow">
-      <div id="roomCodeText" class="roomCode">------</div>
-      <button id="copyCodeBtn" class="btn">Copy</button>
+  <!-- Right Sidebar -->
+  <div id="sidebar">
+    <!-- Room -->
+    <div class="sb-section">
+      <div class="sb-label">Room</div>
+      <div class="room-code" id="roomCodeText">------</div>
+      <div style="display:flex; gap:6px; margin-top:6px; align-items:center;">
+        <button id="copyCodeBtn" class="tb-btn" style="font-size:11px; padding:2px 8px;">Copy</button>
+        <span id="statusBadge" class="status-badge">Lobby</span>
+        <span id="roleText" style="font-size:11px; color:#c9d0ff; margin-left:auto;"></span>
+      </div>
+      <div id="prepCountdownText"></div>
     </div>
-    <div id="roleText" class="meta">Role: -</div>
-    <div id="gameStatusText" class="meta">Status: lobby</div>
-    <div id="countdownText" class="meta">Prep countdown: -</div>
-    <div id="readyStateText" class="meta">Defender ready: false | Attacker ready: false</div>
-    <div id="selectionCountText" class="meta">Selected territories: 0</div>
-    <div id="tickIntervalText" class="meta">Resource tick: —</div>
-    <div id="routeModeRow" class="meta" style="line-height:1.5;">Trade routing (defender):<br>
-      <label><input type="radio" name="routeMode" value="fastest"> Fewest hops</label>
-      <label style="margin-left:8px;"><input type="radio" name="routeMode" value="cheapest"> Lowest cost</label>
+
+    <!-- Ready -->
+    <div class="sb-section" id="readySection">
+      <div class="sb-label" id="readyStateText">Defender: ? | Attacker: ?</div>
+      <button id="readyBtn" class="mc-btn green" disabled>READY</button>
     </div>
-    <div id="productionBuffRow" class="meta" style="margin-top:6px;">
-      Guild production buff: <span id="productionMultText">100%</span>
-      <button type="button" id="prodMultDownBtn" class="btn" style="padding:4px 8px; margin-left:6px;">−10%</button>
-      <button type="button" id="prodMultUpBtn" class="btn" style="padding:4px 8px;">+10%</button>
+
+    <!-- HQ Resources -->
+    <div class="sb-section" id="resourcesPanel" style="display:none;">
+      <div class="sb-label">HQ Resources</div>
+      <div class="res-row"><span class="res-icon">🟡</span><span style="flex:1;font-size:11px;">Emeralds</span><span class="res-val" id="resEmeralds">0</span></div>
+      <div class="res-row"><span class="res-icon">🪵</span><span style="flex:1;font-size:11px;">Wood</span><span class="res-val" id="resWood">0</span></div>
+      <div class="res-row"><span class="res-icon">⛏</span><span style="flex:1;font-size:11px;">Ore</span><span class="res-val" id="resOre">0</span></div>
+      <div class="res-row"><span class="res-icon">🌾</span><span style="flex:1;font-size:11px;">Crops</span><span class="res-val" id="resCrops">0</span></div>
+      <div class="res-row"><span class="res-icon">🐟</span><span style="flex:1;font-size:11px;">Fish</span><span class="res-val" id="resFish">0</span></div>
+      <div id="tickCountdownText" style="font-size:11px; color:#b7ffcf; margin-top:4px;"></div>
+      <ul id="tickMessages" style="list-style:disc; padding-left:16px; margin-top:4px; max-height:70px; overflow-y:auto;"></ul>
     </div>
-    <ul id="territoryList"></ul>
-    <button id="readyBtn" class="btn" disabled>Ready</button>
-    <div id="resourcesPanel">
-      <div class="meta">Defender Resources (server authoritative)</div>
-      <div class="resourceRow"><span>Emeralds</span><span id="resEmeralds">0</span></div>
-      <div class="resourceRow"><span>Wood</span><span id="resWood">0</span></div>
-      <div class="resourceRow"><span>Ore</span><span id="resOre">0</span></div>
-      <div class="resourceRow"><span>Crops</span><span id="resCrops">0</span></div>
-      <div class="resourceRow"><span>Fish</span><span id="resFish">0</span></div>
-      <div id="tickCountdownText">Next tick in: -</div>
-      <ul id="tickMessages"></ul>
+
+    <!-- Tower Stats (attacker view) -->
+    <div class="sb-section" id="towerStatsPanel" style="display:none;">
+      <div class="sb-label">HQ Tower (live)</div>
+      <div class="tower-stats">
+        <div class="ts-row"><span class="ts-key">Tower HP</span><span class="ts-val" id="towerHP">—</span></div>
+        <div class="ts-row"><span class="ts-key">Effective HP</span><span class="ts-val" id="towerEHP">—</span></div>
+        <div class="ts-row"><span class="ts-key">Connections</span><span class="ts-val" id="towerConn">—</span></div>
+        <div class="ts-row"><span class="ts-key">Health Lv</span><span class="ts-val" id="towerHLv">—</span></div>
+        <div class="ts-row"><span class="ts-key">Defense Lv</span><span class="ts-val" id="towerDLv">—</span></div>
+      </div>
     </div>
-    <div id="upgradeReadOnlyPanel" style="display:none; margin-top:8px;">
-      <div class="meta">Territory Upgrades</div>
-      <ul id="upgradeReadOnlyList" style="margin:0; padding-left:16px; font-size:12px; max-height:110px; overflow:auto;"></ul>
+
+    <!-- Territories -->
+    <div class="sb-section">
+      <div class="sb-label">Territories (<span id="selCount">0</span>)</div>
+      <div id="territoryList" style="max-height:120px; overflow-y:auto;"></div>
+      <div id="clickHint" style="font-size:10px; color:#666; margin-top:4px;"></div>
+      <button id="openManageBtn" class="tb-btn" style="width:100%;margin-top:6px;display:none;">📋 Manage Territory</button>
     </div>
   </div>
 
-  <button id="upgradeMenuBtn" class="btn">Upgrade Menu</button>
-  <div id="upgradeModal">
-    <div id="upgradeModalContent">
-      <div class="roomRow upgradeModalHeader">
-        <h3 style="margin:0;">Territory Defense</h3>
-        <button id="upgradeSfxToggleBtn" class="btn sfxToggleBtn">SFX: ON</button>
-        <button id="upgradeModalCloseBtn" class="btn" style="margin-left:auto;">Close</button>
+  <!-- Territory Menu Modal -->
+  <div id="tMenuOverlay">
+    <div id="tMenuBox">
+      <div class="tmenu-hdr">
+        <span class="mc-title" id="tMenuTitle">Territory</span>
+        <select id="tMenuSelect" class="tmenu-select"></select>
+        <button id="tMenuCloseBtn" class="mc-btn" style="margin-left:auto; font-size:16px;">✕</button>
       </div>
-      <div class="upgradeTopIcons">
-        <div class="upgradeIconSlot"><div class="pixelIcon core"></div><span class="upgradeIconLabel">Core</span></div>
-        <div class="upgradeIconSlot"><div class="pixelIcon wand"></div><span class="upgradeIconLabel">Wand</span></div>
-        <div class="upgradeIconSlot"><div class="pixelIcon orbBlue"></div><span class="upgradeIconLabel">Orb</span></div>
-        <div class="upgradeIconSlot"><div class="pixelIcon orbRed"></div><span class="upgradeIconLabel">Orb</span></div>
-        <div class="upgradeIconSlot"><div class="pixelIcon bonus"></div><span class="upgradeIconLabel">Bonuses</span></div>
+      <div class="tmenu-tabs">
+        <div class="tmenu-tab active" data-tab="upgrades">⚔ Upgrades</div>
+        <div class="tmenu-tab" data-tab="bonuses">✨ Bonuses</div>
+        <div class="tmenu-tab" data-tab="storage">📦 Storage</div>
+        <div class="tmenu-tab" data-tab="tax">💰 Tax &amp; Route</div>
+        <div class="tmenu-tab" data-tab="info">📋 Info</div>
       </div>
-      <label class="meta" for="upgradeTerritorySelect">Territory</label>
-      <select id="upgradeTerritorySelect" class="input" style="width:100%; margin-bottom:8px;"></select>
-      <div class="roomRow" style="margin-bottom:8px;">
-        <div style="flex:1;">
-          <label class="meta" for="hqTerritorySelect">HQ Territory</label>
-          <select id="hqTerritorySelect" class="input" style="width:100%;"></select>
-        </div>
-        <button id="setHqBtn" class="btn" style="align-self:flex-end;">Set HQ</button>
+      <div class="tmenu-body" id="tMenuBody"></div>
+    </div>
+  </div>
+
+  <!-- Attacker War Panel -->
+  <div id="warPanel">
+    <div class="war-panel-hdr">
+      <div class="war-panel-title">⚔ CHOOSE ATTACK</div>
+    </div>
+    <div id="warTypeCards"></div>
+  </div>
+
+  <!-- War Countdown -->
+  <div id="warCountdownBar">⚔ War ends in: <span id="warCountdownText">—</span></div>
+
+  <!-- War Result Overlay -->
+  <div id="warResultOverlay">
+    <div class="war-result-box">
+      <div class="war-result-hdr" id="warResultHdr"></div>
+      <div class="war-result-stats" id="warResultStats"></div>
+      <div class="war-result-foot">
+        <button id="warResultCloseBtn" class="mc-btn green" style="font-size:20px; padding:8px 28px;">Close</button>
       </div>
-      <div class="meta" style="margin-bottom:8px;">Defender can move HQ during prep and playing.</div>
-      <div id="upgradeRoleHint" class="meta"></div>
-      <div class="upgradeGrid">
-        <div class="upgradeCard" id="upgradeDamageCard">
-          <h4><span class="pixelIcon sword"></span>Damage (Ore)</h4>
-          <div class="levelRow"><span id="upgradeDamageBadge" class="levelBadge">Lv0</span><div id="upgradeDamageBar" class="segBar"></div></div>
-          <div class="upgradeMeta" id="upgradeDamageMeta">Level 0 · Next cost 0</div>
-          <button id="upgradeDamageBtn" class="btn">Upgrade</button>
-        </div>
-        <div class="upgradeCard" id="upgradeAttackSpeedCard">
-          <h4><span class="pixelIcon armor"></span>Attack Speed (Crops)</h4>
-          <div class="levelRow"><span id="upgradeAttackSpeedBadge" class="levelBadge">Lv0</span><div id="upgradeAttackSpeedBar" class="segBar"></div></div>
-          <div class="upgradeMeta" id="upgradeAttackSpeedMeta">Level 0 · Next cost 0</div>
-          <button id="upgradeAttackSpeedBtn" class="btn">Upgrade</button>
-        </div>
-        <div class="upgradeCard" id="upgradeHealthCard">
-          <h4><span class="pixelIcon heart"></span>Health (Wood)</h4>
-          <div class="levelRow"><span id="upgradeHealthBadge" class="levelBadge">Lv0</span><div id="upgradeHealthBar" class="segBar"></div></div>
-          <div class="upgradeMeta" id="upgradeHealthMeta">Level 0 · Next cost 0</div>
-          <button id="upgradeHealthBtn" class="btn">Upgrade</button>
-        </div>
-        <div class="upgradeCard" id="upgradeDefenseCard">
-          <h4><span class="pixelIcon book"></span>Defense (Fish)</h4>
-          <div class="levelRow"><span id="upgradeDefenseBadge" class="levelBadge">Lv0</span><div id="upgradeDefenseBar" class="segBar"></div></div>
-          <div class="upgradeMeta" id="upgradeDefenseMeta">Level 0 · Next cost 0</div>
-          <button id="upgradeDefenseBtn" class="btn">Upgrade</button>
-        </div>
-        <div class="upgradeCard" id="upgradeStorageCard">
-          <h4>📦 Storage</h4>
-          <div class="levelRow"><span id="upgradeStorageBadge" class="levelBadge">Lv0</span><div id="upgradeStorageBar" class="segBar"></div></div>
-          <div class="upgradeMeta" id="upgradeStorageMeta">Level 0 · Next cost 0</div>
-          <button id="upgradeStorageBtn" class="btn">Upgrade</button>
-        </div>
-      </div>
-      <div style="margin-top:10px;">
-        <div class="meta">Per-Territory Storage Dashboard (current/cap)</div>
-        <ul id="storageDashboardList" style="margin:6px 0 0 0; padding-left:16px; max-height:180px; overflow:auto;"></ul>
-      </div>
-      <ul id="upgradeNoticeList"></ul>
     </div>
   </div>
 

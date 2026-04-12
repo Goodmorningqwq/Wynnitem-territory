@@ -1,1321 +1,1124 @@
+/* ============================================================
+   1v1 Wynncraft Eco War — script.js
+   ============================================================ */
 (function () {
-  const STATIC_TERRITORIES_URL =
-    'https://raw.githubusercontent.com/jakematt123/Wynncraft-Territory-Info/main/territories.json';
-  const MAP_IMAGE_URL = './main-map.webp';
-  const MAP_X_MIN = -2500;
-  const MAP_X_MAX = 2500;
-  const MAP_Z_MIN = -6635;
-  const MAP_Z_MAX = 0;
-  const MAP_OFFSET_X_PX = 75;
-  const MAP_OFFSET_Y_PX = -15;
-  const MAP_SCALE_X = 1;
-  const MAP_SCALE_Y = 1;
-  const MAP_BG_SCALE_X = 0.803;
-  const MAP_BG_SCALE_Y = 0.966;
-  const SOCKET_DEV_PORT = 3001;
-  const ECO_WAR_SESSION_KEY_PREFIX = 'ecoWarRoomSessionV1';
-  const FLIP_Z = true;
-  const UPGRADE_COSTS = {
-    damage: [0, 50, 120, 250, 450, 700, 1000, 1400, 1900, 2500, 3200, 4000],
-    attackSpeed: [0, 40, 100, 220, 400, 650, 950, 1350, 1800, 2400, 3100, 3900],
-    health: [0, 60, 140, 280, 500, 780, 1100, 1550, 2100, 2800, 3600, 4500],
-    defense: [0, 30, 80, 170, 320, 520, 780, 1100, 1500, 2000, 2600, 3300]
-  };
-  const STORAGE_COSTS = {
-    emeralds: [0, 300, 650, 1100, 1700, 2500, 3500, 4700, 6200, 8000, 10100, 12500],
-    wood: [0, 100, 220, 400, 650, 950, 1350, 1850, 2500, 3300, 4300, 5500]
-  };
-  const UPGRADE_RESOURCE_BY_CATEGORY = {
-    damage: 'ore',
-    attackSpeed: 'crops',
-    health: 'wood',
-    defense: 'fish',
-    storage: 'wood'
-  };
-  const PRODUCTION_MULT_MIN = 0.5;
-  const PRODUCTION_MULT_MAX = 1.5;
+  'use strict';
 
+  // ─── Constants ──────────────────────────────────────────────────────────────
+  const STATIC_TERRITORIES_URL = 'https://raw.githubusercontent.com/jakematt123/Wynncraft-Territory-Info/main/territories.json';
+  const MAP_IMAGE_URL   = './main-map.webp';
+  const MAP_X_MIN = -2500, MAP_X_MAX = 2500;
+  const MAP_Z_MIN = -6635, MAP_Z_MAX = 0;
+  const MAP_OFFSET_X_PX = 75, MAP_OFFSET_Y_PX = -15;
+  const MAP_SCALE_X = 1, MAP_SCALE_Y = 1;
+  const FLIP_Z = true;
+  const SOCKET_DEV_PORT = 3001;
+  const SESSION_KEY_PREFIX = 'ecoWarRoomSessionV2';
+
+  // Real Wynncraft upgrade costs (identical for all 4 stat types)
+  const UPGRADE_COSTS_PER_LEVEL = [0, 100, 300, 600, 1200, 2400, 4800, 8400, 12000, 15600, 19200, 22800];
+  const UPGRADE_RESOURCE = { damage: 'ore', attackSpeed: 'crops', health: 'wood', defense: 'fish', storage: 'wood' };
+  const UPGRADE_ICON     = { damage: '⚔', attackSpeed: '⚡', health: '❤', defense: '🛡', storage: '📦' };
+  const UPGRADE_LABEL    = { damage: 'Damage', attackSpeed: 'Atk Speed', health: 'Health', defense: 'Defense', storage: 'Storage' };
+
+  const BONUS_DEFS = {
+    strongerMobs:       { icon: '💀', label: 'Stronger Mobs',    desc: 'Mob damage bonus',           resource: 'wood',     costs: [0,1200,2400,4800], maxLevel: 3 },
+    multiAttack:        { icon: '⚔⚔',label: 'Multi-Attack',      desc: 'Tower hits 2 targets',        resource: 'fish',     costs: [0,3200],           maxLevel: 1 },
+    aura:               { icon: '🔥', label: 'Aura',              desc: 'True dmg — inner circle',     resource: 'crops',    costs: [0,2000],           maxLevel: 1 },
+    volley:             { icon: '💥', label: 'Volley',            desc: 'True dmg — outer circle',     resource: 'ore',      costs: [0,2000],           maxLevel: 1 },
+    resourceProduction: { icon: '📈', label: 'Res. Production',   desc: '+10% resources per level',    resource: 'ore',      costs: [0,800,1600,3200],  maxLevel: 3 },
+    emeraldProduction:  { icon: '💎', label: 'Em. Production',    desc: '+10% emeralds per level',     resource: 'emeralds', costs: [0,1000,2000,4000], maxLevel: 3 }
+  };
+
+  const WAR_TYPES = {
+    solo:   { label: 'Solo Warrer',      dps: 150000,   icon: '⚔',     color: '#ffcc44' },
+    normal: { label: 'Normal War Team',  dps: 2000000,  icon: '⚔⚔',   color: '#ff8844' },
+    elite:  { label: 'Elite War Team',   dps: 4000000,  icon: '⚔⚔⚔',  color: '#ff4444' }
+  };
+
+  const HQ_BASE_STORE  = { emeralds: 5000,   resource: 1500   };
+  const HQ_MAX_STORE   = { emeralds: 400000, resource: 120000 };
+
+  // ─── State ──────────────────────────────────────────────────────────────────
   const state = {
-    map: null,
-    geo: null,
+    map: null, geo: null,
     territoryByName: new Map(),
     layerByName: new Map(),
     routeLayer: null,
     hqMarker: null,
-    selectedTerritories: new Set(),
+    selectedSet: new Set(),
     socket: null,
     currentRoom: null,
     role: null,
     connected: false,
-    armedForDefenderCreate: false,
-    lastTickPayload: null,
-    tickCountdownTimer: null,
-    selectedUpgradeTerritory: '',
-    upgradeNotices: [],
     sfxEnabled: true,
     socketBase: '',
-    resumeInFlight: false
+    resumeInFlight: false,
+    tickCdTimer: null,
+    warCdTimer: null,
+    activeMenu: null,   // territory name currently open
+    activeTab: 'upgrades',
+    warEstimates: null,
+    selectedWarType: 'normal',
   };
 
-  const els = {
-    createGameBtn: document.getElementById('createGameBtn'),
-    joinCodeInput: document.getElementById('joinCodeInput'),
-    joinGameBtn: document.getElementById('joinGameBtn'),
-    statusText: document.getElementById('statusText'),
-    lobbyOverlay: document.getElementById('lobbyOverlay'),
-    roomCodeText: document.getElementById('roomCodeText'),
-    copyCodeBtn: document.getElementById('copyCodeBtn'),
-    roleText: document.getElementById('roleText'),
-    gameStatusText: document.getElementById('gameStatusText'),
-    countdownText: document.getElementById('countdownText'),
-    readyStateText: document.getElementById('readyStateText'),
-    selectionCountText: document.getElementById('selectionCountText'),
-    tickIntervalText: document.getElementById('tickIntervalText'),
-    routeModeRow: document.getElementById('routeModeRow'),
-    productionBuffRow: document.getElementById('productionBuffRow'),
-    productionMultText: document.getElementById('productionMultText'),
-    prodMultDownBtn: document.getElementById('prodMultDownBtn'),
-    prodMultUpBtn: document.getElementById('prodMultUpBtn'),
-    territoryList: document.getElementById('territoryList'),
-    readyBtn: document.getElementById('readyBtn'),
-    resourcesPanel: document.getElementById('resourcesPanel'),
-    resEmeralds: document.getElementById('resEmeralds'),
-    resWood: document.getElementById('resWood'),
-    resOre: document.getElementById('resOre'),
-    resCrops: document.getElementById('resCrops'),
-    resFish: document.getElementById('resFish'),
-    tickCountdownText: document.getElementById('tickCountdownText'),
-    tickMessages: document.getElementById('tickMessages'),
-    upgradeMenuBtn: document.getElementById('upgradeMenuBtn'),
-    upgradeModal: document.getElementById('upgradeModal'),
-    upgradeModalCloseBtn: document.getElementById('upgradeModalCloseBtn'),
-    upgradeTerritorySelect: document.getElementById('upgradeTerritorySelect'),
-    hqTerritorySelect: document.getElementById('hqTerritorySelect'),
-    setHqBtn: document.getElementById('setHqBtn'),
-    upgradeRoleHint: document.getElementById('upgradeRoleHint'),
-    upgradeDamageMeta: document.getElementById('upgradeDamageMeta'),
-    upgradeAttackSpeedMeta: document.getElementById('upgradeAttackSpeedMeta'),
-    upgradeHealthMeta: document.getElementById('upgradeHealthMeta'),
-    upgradeDefenseMeta: document.getElementById('upgradeDefenseMeta'),
-    upgradeStorageMeta: document.getElementById('upgradeStorageMeta'),
-    upgradeDamageBtn: document.getElementById('upgradeDamageBtn'),
-    upgradeAttackSpeedBtn: document.getElementById('upgradeAttackSpeedBtn'),
-    upgradeHealthBtn: document.getElementById('upgradeHealthBtn'),
-    upgradeDefenseBtn: document.getElementById('upgradeDefenseBtn'),
-    upgradeStorageBtn: document.getElementById('upgradeStorageBtn'),
-    upgradeNoticeList: document.getElementById('upgradeNoticeList'),
-    upgradeReadOnlyPanel: document.getElementById('upgradeReadOnlyPanel'),
-    upgradeReadOnlyList: document.getElementById('upgradeReadOnlyList'),
-    upgradeSfxToggleBtn: document.getElementById('upgradeSfxToggleBtn'),
-    upgradeDamageCard: document.getElementById('upgradeDamageCard'),
-    upgradeAttackSpeedCard: document.getElementById('upgradeAttackSpeedCard'),
-    upgradeHealthCard: document.getElementById('upgradeHealthCard'),
-    upgradeDefenseCard: document.getElementById('upgradeDefenseCard'),
-    upgradeStorageCard: document.getElementById('upgradeStorageCard'),
-    upgradeDamageBadge: document.getElementById('upgradeDamageBadge'),
-    upgradeAttackSpeedBadge: document.getElementById('upgradeAttackSpeedBadge'),
-    upgradeHealthBadge: document.getElementById('upgradeHealthBadge'),
-    upgradeDefenseBadge: document.getElementById('upgradeDefenseBadge'),
-    upgradeStorageBadge: document.getElementById('upgradeStorageBadge'),
-    upgradeDamageBar: document.getElementById('upgradeDamageBar'),
-    upgradeAttackSpeedBar: document.getElementById('upgradeAttackSpeedBar'),
-    upgradeHealthBar: document.getElementById('upgradeHealthBar'),
-    upgradeDefenseBar: document.getElementById('upgradeDefenseBar'),
-    upgradeStorageBar: document.getElementById('upgradeStorageBar')
+  // ─── Element refs ────────────────────────────────────────────────────────────
+  const $ = id => document.getElementById(id);
+  const E = {
+    createBtn:      $('createGameBtn'),
+    joinInput:      $('joinCodeInput'),
+    joinBtn:        $('joinGameBtn'),
+    sfxBtn:         $('sfxToggleBtn'),
+    statusText:     $('statusText'),
+    sidebar:        $('sidebar'),
+    roomCode:       $('roomCodeText'),
+    copyCode:       $('copyCodeBtn'),
+    statusBadge:    $('statusBadge'),
+    roleText:       $('roleText'),
+    prepCd:         $('prepCountdownText'),
+    readySection:   $('readySection'),
+    readyStateText: $('readyStateText'),
+    readyBtn:       $('readyBtn'),
+    resPanel:       $('resourcesPanel'),
+    resEm:          $('resEmeralds'),
+    resWo:          $('resWood'),
+    resOr:          $('resOre'),
+    resCr:          $('resCrops'),
+    resFi:          $('resFish'),
+    tickCd:         $('tickCountdownText'),
+    tickMsgs:       $('tickMessages'),
+    towerPanel:     $('towerStatsPanel'),
+    towerHP:        $('towerHP'),
+    towerEHP:       $('towerEHP'),
+    towerConn:      $('towerConn'),
+    towerHLv:       $('towerHLv'),
+    towerDLv:       $('towerDLv'),
+    selCount:       $('selCount'),
+    terrList:       $('territoryList'),
+    clickHint:      $('clickHint'),
+    openManageBtn:  $('openManageBtn'),
+    // Menu
+    tMenuOverlay:   $('tMenuOverlay'),
+    tMenuBox:       $('tMenuBox'),
+    tMenuTitle:     $('tMenuTitle'),
+    tMenuSelect:    $('tMenuSelect'),
+    tMenuCloseBtn:  $('tMenuCloseBtn'),
+    tMenuBody:      $('tMenuBody'),
+    // War
+    warPanel:       $('warPanel'),
+    warTypeCards:   $('warTypeCards'),
+    warCdBar:       $('warCountdownBar'),
+    warCdText:      $('warCountdownText'),
+    warResultOver:  $('warResultOverlay'),
+    warResultHdr:   $('warResultHdr'),
+    warResultStats: $('warResultStats'),
+    warResultClose: $('warResultCloseBtn'),
   };
 
-  function fmt(value) {
-    return (Number(value) || 0).toLocaleString();
-  }
+  // ─── Utilities ───────────────────────────────────────────────────────────────
+  const fmt = v => (Number(v) || 0).toLocaleString();
+  const fmtTime = s => (Math.floor(s / 60)) + 'm ' + String(Math.max(0, s % 60)).padStart(2, '0') + 's';
+  const clamp   = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const clamp01 = v => clamp(v, 0, 1);
 
-  function nowStamp() {
-    const d = new Date();
-    const h = String(d.getHours()).padStart(2, '0');
-    const m = String(d.getMinutes()).padStart(2, '0');
-    const s = String(d.getSeconds()).padStart(2, '0');
-    return h + ':' + m + ':' + s;
-  }
-
-  function pushUpgradeNotice(text) {
-    state.upgradeNotices.unshift('[' + nowStamp() + '] ' + text);
-    if (state.upgradeNotices.length > 20) {
-      state.upgradeNotices = state.upgradeNotices.slice(0, 20);
-    }
-  }
-
-  function renderSegBar(container, level, maxed) {
-    if (!container) return;
-    container.classList.toggle('maxed', !!maxed);
-    container.innerHTML = '';
-    for (let i = 0; i < 11; i++) {
-      const seg = document.createElement('span');
-      if (i < level) seg.classList.add('on');
-      container.appendChild(seg);
-    }
-  }
-
-  function setSfxEnabled(enabled) {
-    state.sfxEnabled = !!enabled;
-    try {
-      localStorage.setItem('warSfxEnabled', state.sfxEnabled ? '1' : '0');
-    } catch (_e) {}
-    if (els.upgradeSfxToggleBtn) {
-      els.upgradeSfxToggleBtn.textContent = 'SFX: ' + (state.sfxEnabled ? 'ON' : 'OFF');
-    }
-  }
-
-  function playSfx(kind) {
+  function playSfx(type) {
     if (!state.sfxEnabled) return;
     try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx();
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
       const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+      const gn  = ctx.createGain();
       osc.type = 'square';
-      osc.frequency.value = kind === 'success' ? 720 : 220;
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.13);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.14);
-      osc.onended = function () {
-        ctx.close();
-      };
-    } catch (_e) {}
+      osc.frequency.value = type === 'success' ? 880 : type === 'warn' ? 330 : 660;
+      gn.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gn.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.01);
+      gn.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.15);
+      osc.connect(gn); gn.connect(ctx.destination);
+      osc.start(); osc.stop(ctx.currentTime + 0.16);
+      osc.onended = () => ctx.close();
+    } catch (_) {}
   }
 
-  function stopTickCountdownTimer() {
-    if (state.tickCountdownTimer) {
-      clearInterval(state.tickCountdownTimer);
-      state.tickCountdownTimer = null;
-    }
-  }
-
-  function startTickCountdownTimer(nextTickInMs) {
-    stopTickCountdownTimer();
-    const endsAt = Date.now() + (nextTickInMs || 0);
-    function paint() {
-      const msLeft = Math.max(0, endsAt - Date.now());
-      const secLeft = Math.ceil(msLeft / 1000);
-      els.tickCountdownText.textContent = 'Next tick in: ' + secLeft + 's';
-      if (msLeft <= 0) {
-        stopTickCountdownTimer();
-      }
-    }
-    paint();
-    state.tickCountdownTimer = setInterval(paint, 250);
-  }
-
-  /**
-   * @param {object} row
-   * @returns {string[]}
-   */
-  function readTradeRoutes(row) {
-    const tr = row['Trading Routes'] || row.tradingRoutes || row.trade_routes;
-    return Array.isArray(tr) ? tr.map(String) : [];
-  }
-
-  const territoryDataAdapter = {
-    async loadStatic() {
-      const res = await fetch(STATIC_TERRITORIES_URL);
-      if (!res.ok) throw new Error('Failed to load static territory data');
-      return res.json();
-    },
-    parseTerritories(staticData) {
-      const list = [];
-      Object.keys(staticData).forEach(function (name) {
-        const row = staticData[name] || {};
-        const loc = row.Location || row.location;
-        const tradeRoutes = readTradeRoutes(row);
-        if (!loc || !loc.start || !loc.end) return;
-        const x1 = loc.start[0];
-        const z1 = loc.start[1];
-        const x2 = loc.end[0];
-        const z2 = loc.end[1];
-        list.push({
-          name,
-          minX: Math.min(x1, x2),
-          maxX: Math.max(x1, x2),
-          minZ: Math.min(z1, z2),
-          maxZ: Math.max(z1, z2),
-          guildName: '',
-          tradeRoutes
-        });
-      });
-      return list;
-    }
-  };
-
-  function clamp01(value) {
-    return Math.max(0, Math.min(1, value));
-  }
-
-  /**
-   * @param {number} imgW
-   * @param {number} imgH
-   * @returns {object} Leaflet LatLngBounds
-   */
-  function getImageOverlayBounds(imgW, imgH) {
-    const scaledW = imgW * MAP_BG_SCALE_X;
-    const scaledH = imgH * MAP_BG_SCALE_Y;
-    const minLng = (imgW - scaledW) / 2;
-    const maxLng = minLng + scaledW;
-    const minLat = (imgH - scaledH) / 2;
-    const maxLat = minLat + scaledH;
-    return L.latLngBounds([[minLat, minLng], [maxLat, maxLng]]);
-  }
-
-  function applyLiveOwnership() {
-    state.territoryByName.forEach(function (t) {
-      t.guildName = '';
-    });
-    renderSelectionLocally();
-  }
-
-  function worldToLayer(x, z) {
-    const imgW = state.geo.imgW;
-    const imgH = state.geo.imgH;
-    const westSpan = Math.abs(MAP_X_MIN) || 1;
-    const eastSpan = Math.abs(MAP_X_MAX) || 1;
-    const northSpan = Math.abs(MAP_Z_MIN) || 1;
-    const southSpan = Math.abs(MAP_Z_MAX) || 1;
-
-    let nx = 0.5;
-    if (x < 0) nx = 0.5 - 0.5 * (Math.abs(x) / westSpan);
-    else nx = 0.5 + 0.5 * (Math.abs(x) / eastSpan);
-
-    let ny = 1;
-    if (z <= 0) ny = 1 - (Math.abs(z) / northSpan);
-    else ny = 1 + (Math.abs(z) / southSpan);
-
-    nx = clamp01(nx);
-    ny = clamp01(ny);
-    if (FLIP_Z) ny = 1 - ny;
-
-    const scaledNx = 0.5 + (nx - 0.5) * MAP_SCALE_X;
-    const scaledNy = 0.5 + (ny - 0.5) * MAP_SCALE_Y;
-    return L.latLng(
-      scaledNy * imgH + MAP_OFFSET_Y_PX,
-      scaledNx * imgW + MAP_OFFSET_X_PX
-    );
-  }
-
-  function boundsFromWorldRect(t) {
-    const corners = [
-      worldToLayer(t.minX, t.minZ),
-      worldToLayer(t.maxX, t.minZ),
-      worldToLayer(t.maxX, t.maxZ),
-      worldToLayer(t.minX, t.maxZ)
-    ];
-    let minLat = Infinity;
-    let maxLat = -Infinity;
-    let minLng = Infinity;
-    let maxLng = -Infinity;
-    corners.forEach(function (c) {
-      minLat = Math.min(minLat, c.lat);
-      maxLat = Math.max(maxLat, c.lat);
-      minLng = Math.min(minLng, c.lng);
-      maxLng = Math.max(maxLng, c.lng);
-    });
-    return L.latLngBounds([[minLat, minLng], [maxLat, maxLng]]);
-  }
-
-  function selectedArray() {
-    return Array.from(state.selectedTerritories);
-  }
-
-  function setStatus(text) {
-    els.statusText.textContent = text;
-  }
-
-  function roomSessionKey() {
-    const base = state.socketBase || 'default';
-    return ECO_WAR_SESSION_KEY_PREFIX + ':' + base;
-  }
-
-  function saveRoomSession(session) {
+  // ─── Session ─────────────────────────────────────────────────────────────────
+  const sessionKey = () => SESSION_KEY_PREFIX + ':' + (state.socketBase || 'default');
+  function saveSession(s) { try { sessionStorage.setItem(sessionKey(), JSON.stringify(s)); } catch(_) {} }
+  function loadSession() {
     try {
-      sessionStorage.setItem(roomSessionKey(), JSON.stringify(session));
-    } catch (_e) {}
-  }
-
-  function loadRoomSession() {
-    try {
-      const raw = sessionStorage.getItem(roomSessionKey());
+      const raw = sessionStorage.getItem(sessionKey());
       if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object') return null;
-      if (!/^\d{6}$/.test(parsed.roomId || '')) return null;
-      if (!parsed.playerToken || typeof parsed.playerToken !== 'string') return null;
-      if ((parsed.role !== 'defender' && parsed.role !== 'attacker')) return null;
-      return parsed;
-    } catch (_e) {
-      return null;
-    }
+      const p = JSON.parse(raw);
+      if (!p || !/^\d{6}$/.test(p.roomId || '') || !p.playerToken || (p.role !== 'defender' && p.role !== 'attacker')) return null;
+      return p;
+    } catch(_) { return null; }
   }
+  function clearSession() { try { sessionStorage.removeItem(sessionKey()); } catch(_) {} }
 
-  function clearRoomSession() {
-    try {
-      sessionStorage.removeItem(roomSessionKey());
-    } catch (_e) {}
-  }
-
-  function inferRoleFromRoom(room) {
-    if (!room || !state.socket || !state.socket.id) return null;
-    if (room.defenderSocketId === state.socket.id) return 'defender';
-    if (room.attackerSocketId === state.socket.id) return 'attacker';
-    return null;
-  }
-
-  /**
-   * Socket.io base URL (where server/proxy.js or equivalent is running).
-   * Vercel and similar static hosts do not run Socket.io; set meta or ECO_WAR_SOCKET_URL for production HTTPS.
-   * @returns {string | null}
-   */
-  function getEcoWarSocketBase() {
+  // ─── Socket URL / Token ──────────────────────────────────────────────────────
+  function getSocketBase() {
     try {
       const el = document.querySelector('meta[name="eco-war-socket-url"]');
-      if (el && el.content && String(el.content).trim()) {
-        return String(el.content).trim().replace(/\/+$/, '');
-      }
-    } catch (_e) {}
-    if (typeof window.ECO_WAR_SOCKET_URL === 'string' && window.ECO_WAR_SOCKET_URL.trim()) {
-      return window.ECO_WAR_SOCKET_URL.trim().replace(/\/+$/, '');
-    }
-    const host = window.location.hostname || '';
-    const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '';
-    if (isLocal) {
-      return 'http://127.0.0.1:' + SOCKET_DEV_PORT;
-    }
-    if (window.location.protocol === 'http:') {
-      return 'http://' + host + ':' + SOCKET_DEV_PORT;
-    }
+      if (el && el.content.trim()) return el.content.trim().replace(/\/+$/, '');
+    } catch(_) {}
+    const h = window.location.hostname;
+    if (h === 'localhost' || h === '127.0.0.1' || h === '') return 'http://127.0.0.1:' + SOCKET_DEV_PORT;
     return null;
   }
-
-  /**
-   * Optional shared token used for privileged room actions when backend enforces it.
-   * @returns {string}
-   */
-  function getEcoWarSharedToken() {
+  function getSharedToken() {
     try {
       const el = document.querySelector('meta[name="eco-war-shared-token"]');
-      if (el && el.content && String(el.content).trim()) {
-        return String(el.content).trim();
-      }
-    } catch (_e) {}
-    if (typeof window.ECO_WAR_SHARED_TOKEN === 'string' && window.ECO_WAR_SHARED_TOKEN.trim()) {
-      return window.ECO_WAR_SHARED_TOKEN.trim();
-    }
+      if (el && el.content.trim()) return el.content.trim();
+    } catch(_) {}
     return '';
   }
 
-  function styleForTerritoryName(name) {
-    const room = state.currentRoom;
-    const hq = room && Array.isArray(room.selectedTerritories) && room.selectedTerritories.length
-      ? (room.hqTerritory || room.selectedTerritories[0] || '')
-      : '';
-    const isHq = !!hq && name === hq;
-    const selected = state.selectedTerritories.has(name);
-    if (selected) {
-      if (isHq) {
-        return {
-          color: '#facc15',
-          weight: 3,
-          fillColor: '#3b82f6',
-          fillOpacity: 0.55,
-          opacity: 1
-        };
-      }
-      return {
-        color: '#4da3ff',
-        weight: 2,
-        fillColor: '#3b82f6',
-        fillOpacity: 0.5,
-        opacity: 1
-      };
-    }
-    if (isHq) {
-      return {
-        color: '#facc15',
-        weight: 2.5,
-        fillColor: '#fde68a',
-        fillOpacity: 0.3,
-        opacity: 0.95
-      };
-    }
-    return {
-      color: 'rgba(180, 180, 190, 0.85)',
-      weight: 1,
-      fillColor: '#f5f5f7',
-      fillOpacity: 0.22,
-      opacity: 0.85
-    };
+  // ─── Map Coordinate Helpers ──────────────────────────────────────────────────
+  function worldToLayer(x, z) {
+    const { imgW, imgH } = state.geo;
+    let nx = x < 0 ? 0.5 - 0.5 * (Math.abs(x) / Math.abs(MAP_X_MIN)) : 0.5 + 0.5 * (Math.abs(x) / Math.abs(MAP_X_MAX));
+    let ny = z <= 0 ? 1 - (Math.abs(z) / Math.abs(MAP_Z_MIN)) : 1 + (Math.abs(z) / Math.abs(MAP_Z_MAX));
+    nx = clamp01(nx); ny = clamp01(ny);
+    if (FLIP_Z) ny = 1 - ny;
+    const snx = 0.5 + (nx - 0.5) * MAP_SCALE_X;
+    const sny = 0.5 + (ny - 0.5) * MAP_SCALE_Y;
+    return L.latLng(sny * imgH + MAP_OFFSET_Y_PX, snx * imgW + MAP_OFFSET_X_PX);
   }
-
-  function updateLayerStyle(name) {
-    const layer = state.layerByName.get(name);
-    if (!layer) return;
-    layer.setStyle(styleForTerritoryName(name));
-  }
-
-  function renderSelectionLocally() {
-    state.layerByName.forEach(function (_layer, name) {
-      updateLayerStyle(name);
+  function boundsFromWorldRect(t) {
+    const corners = [
+      worldToLayer(t.minX, t.minZ), worldToLayer(t.maxX, t.minZ),
+      worldToLayer(t.maxX, t.maxZ), worldToLayer(t.minX, t.maxZ),
+    ];
+    let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+    corners.forEach(c => {
+      if (c.lat < minLat) minLat = c.lat; if (c.lat > maxLat) maxLat = c.lat;
+      if (c.lng < minLng) minLng = c.lng; if (c.lng > maxLng) maxLng = c.lng;
     });
-    renderHqMarker();
-    renderTradeRoutesOverlay();
-    refreshTerritoryTooltips();
+    return L.latLngBounds([[minLat, minLng], [maxLat, maxLng]]);
   }
-
-  function territoryCenterByName(name) {
+  function territoryCenterLatLng(name) {
     const t = state.territoryByName.get(name);
     if (!t) return null;
     return worldToLayer((t.minX + t.maxX) / 2, (t.minZ + t.maxZ) / 2);
   }
 
-  function getTerritoryStorageRow(name) {
-    const room = state.currentRoom || {};
-    const all = room.perTerritoryStorage || {};
-    return all[name] || null;
+  // ─── HQ Capacity ─────────────────────────────────────────────────────────────
+  function hqCap(storLevel, resKey) {
+    const lv = clamp(storLevel, 0, 11);
+    if (resKey === 'emeralds') return Math.floor(HQ_BASE_STORE.emeralds + (lv / 11) * (HQ_MAX_STORE.emeralds - HQ_BASE_STORE.emeralds));
+    return Math.floor(HQ_BASE_STORE.resource + (lv / 11) * (HQ_MAX_STORE.resource - HQ_BASE_STORE.resource));
   }
 
-  function getStorageCapacity(level, isHq) {
-    const base = 500000;
-    const multiplier = 1 + (Math.max(0, Math.min(11, Number(level) || 0)) * 0.25);
-    const hqMultiplier = isHq ? 10 : 1;
-    return Math.floor(base * multiplier * hqMultiplier);
-  }
-
-  function getMainResourceKey(name) {
-    const territory = state.territoryByName.get(name);
-    if (!territory) return 'wood';
-    const keys = ['wood', 'ore', 'crops', 'fish'];
-    let best = 'wood';
-    let bestValue = -1;
-    for (let i = 0; i < keys.length; i++) {
-      const key = keys[i];
-      const val = Number(territory.resources && territory.resources[key] ? territory.resources[key] : 0);
-      if (val > bestValue) {
-        bestValue = val;
-        best = key;
-      }
-    }
-    return best;
-  }
-
-  function territoryTooltipHtml(name) {
-    const row = getTerritoryStorageRow(name);
-    if (!row) return name;
-    const mainKey = getMainResourceKey(name);
-    return (
-      '<strong>' + name + '</strong><br>' +
-      'Emeralds: ' + fmt(row.emeralds) + '<br>' +
-      mainKey.charAt(0).toUpperCase() + mainKey.slice(1) + ': ' + fmt(row[mainKey])
-    );
-  }
-
-  function refreshTerritoryTooltips() {
-    state.layerByName.forEach(function (layer, name) {
-      if (!layer || !layer.getTooltip || !layer.getTooltip()) return;
-      layer.setTooltipContent(territoryTooltipHtml(name));
-    });
-  }
-
-  function buildSelectedAdjacency(selectedSet) {
-    const adjacency = new Map();
-    selectedSet.forEach(function (name) {
-      adjacency.set(name, new Set());
-    });
-    selectedSet.forEach(function (fromName) {
-      const territory = state.territoryByName.get(fromName);
-      const neighbors = territory && Array.isArray(territory.tradeRoutes) ? territory.tradeRoutes : [];
-      for (let i = 0; i < neighbors.length; i++) {
-        const toName = neighbors[i];
-        if (!selectedSet.has(toName)) continue;
-        adjacency.get(fromName).add(toName);
-        adjacency.get(toName).add(fromName);
-      }
-    });
-    return adjacency;
-  }
-
-  function findRouteToHq(fromName, hqName) {
-    if (!fromName || !hqName) return null;
-    if (fromName === hqName) return [hqName];
+  // ─── Territory Styling ───────────────────────────────────────────────────────
+  function styleFor(name) {
     const room = state.currentRoom;
-    const selected = room && Array.isArray(room.selectedTerritories) ? room.selectedTerritories : [];
-    const selectedSet = new Set(selected);
-    if (!selectedSet.has(fromName) || !selectedSet.has(hqName)) return null;
-    const adjacency = buildSelectedAdjacency(selectedSet);
-    const queue = [fromName];
-    const visited = new Set([fromName]);
-    const parent = new Map();
+    const hq   = room && room.hqTerritory ? room.hqTerritory : '';
+    const sel  = state.selectedSet.has(name) || (room && (room.selectedTerritories || []).includes(name));
+    const isHq = !!hq && name === hq;
+    if (sel && isHq) return { color: '#facc15', weight: 3, fillColor: '#3b82f6', fillOpacity: 0.55, opacity: 1 };
+    if (sel)         return { color: '#4da3ff', weight: 2, fillColor: '#3b82f6', fillOpacity: 0.45, opacity: 1 };
+    if (isHq)        return { color: '#facc15', weight: 2, fillColor: '#fde68a', fillOpacity: 0.3,  opacity: 0.9 };
+    return { color: 'rgba(180,180,200,0.7)', weight: 1, fillColor: '#ffffff', fillOpacity: 0.15, opacity: 0.75 };
+  }
+  function updateStyle(name) { const l = state.layerByName.get(name); if (l) l.setStyle(styleFor(name)); }
+  function updateAllStyles() { state.layerByName.forEach((_, n) => updateStyle(n)); }
+
+  // ─── Route Rendering ─────────────────────────────────────────────────────────
+  function buildAdjacency(selectedArr) {
+    const set = new Set(selectedArr);
+    const adj = new Map();
+    selectedArr.forEach(n => adj.set(n, new Set()));
+    selectedArr.forEach(from => {
+      const t = state.territoryByName.get(from);
+      if (!t || !t.tradeRoutes) return;
+      t.tradeRoutes.forEach(to => {
+        if (!set.has(to)) return;
+        adj.get(from).add(to);
+        adj.get(to).add(from);
+      });
+    });
+    return adj;
+  }
+  function bfsHq(from, hq, adj) {
+    if (from === hq) return [hq];
+    if (!adj.has(from) || !adj.has(hq)) return null;
+    const queue = [from], visited = new Set([from]), parent = new Map();
     while (queue.length) {
-      const current = queue.shift();
-      const neighbors = Array.from(adjacency.get(current) || []);
-      for (let i = 0; i < neighbors.length; i++) {
-        const next = neighbors[i];
+      const cur = queue.shift();
+      for (const next of Array.from(adj.get(cur) || [])) {
         if (visited.has(next)) continue;
-        visited.add(next);
-        parent.set(next, current);
-        if (next === hqName) {
-          const path = [hqName];
-          let cursor = hqName;
-          while (parent.has(cursor)) {
-            cursor = parent.get(cursor);
-            path.push(cursor);
-            if (cursor === fromName) break;
-          }
-          path.reverse();
-          return path;
+        visited.add(next); parent.set(next, cur);
+        if (next === hq) {
+          const path = [hq]; let c = hq;
+          while (parent.has(c)) { c = parent.get(c); path.push(c); if (c === from) break; }
+          return path.reverse();
         }
         queue.push(next);
       }
     }
     return null;
   }
-
-  function renderTradeRoutesOverlay() {
+  function renderRoutes() {
     if (!state.routeLayer) return;
     state.routeLayer.clearLayers();
+    if (state.hqMarker) { state.map.removeLayer(state.hqMarker); state.hqMarker = null; }
     const room = state.currentRoom;
-    if (!room || !Array.isArray(room.selectedTerritories) || room.selectedTerritories.length === 0) return;
-    const hq = room.hqTerritory || room.selectedTerritories[0];
-    if (!hq) return;
-    const selectedSet = new Set(room.selectedTerritories);
-    const pathEdgeKeys = new Set();
-    room.selectedTerritories.forEach(function (name) {
-      const path = findRouteToHq(name, hq);
+    const selected = room ? (room.selectedTerritories || []) : Array.from(state.selectedSet);
+    const hq = room ? (room.hqTerritory || selected[0]) : selected[0];
+    if (!selected.length || !hq) return;
+    const selectedSet = new Set(selected);
+    const adj = buildAdjacency(selected);
+    // Compute path edges
+    const pathEdges = new Set();
+    selected.forEach(name => {
+      const path = bfsHq(name, hq, adj);
       if (!path || path.length < 2) return;
       for (let i = 0; i < path.length - 1; i++) {
-        const a = path[i];
-        const b = path[i + 1];
-        if (!selectedSet.has(a) || !selectedSet.has(b)) continue;
-        const key = a < b ? a + '|' + b : b + '|' + a;
-        pathEdgeKeys.add(key);
+        const a = path[i], b = path[i + 1];
+        if (selectedSet.has(a) && selectedSet.has(b)) pathEdges.add(a < b ? a + '|' + b : b + '|' + a);
       }
     });
+    // Draw edges
     const drawn = new Set();
-    selectedSet.forEach(function (name) {
+    selected.forEach(name => {
       const t = state.territoryByName.get(name);
-      if (!t || !Array.isArray(t.tradeRoutes)) return;
-      for (let i = 0; i < t.tradeRoutes.length; i++) {
-        const other = t.tradeRoutes[i];
-        if (!selectedSet.has(other) || !state.territoryByName.has(other)) continue;
-        const a = name;
-        const b = other;
-        const key = a < b ? a + '|' + b : b + '|' + a;
-        if (drawn.has(key)) continue;
+      if (!t || !t.tradeRoutes) return;
+      t.tradeRoutes.forEach(other => {
+        if (!selectedSet.has(other)) return;
+        const key = name < other ? name + '|' + other : other + '|' + name;
+        if (drawn.has(key)) return;
         drawn.add(key);
-        const start = territoryCenterByName(a);
-        const end = territoryCenterByName(b);
-        if (!start || !end) continue;
-        const onHqPath = pathEdgeKeys.has(key);
-        L.polyline([start, end], {
-          color: onHqPath ? '#ffe08a' : '#8ec5ff',
-          weight: onHqPath ? 3 : 2,
-          opacity: onHqPath ? 0.95 : 0.55,
-          dashArray: onHqPath ? null : '4 4'
+        const s = territoryCenterLatLng(name), e = territoryCenterLatLng(other);
+        if (!s || !e) return;
+        const onPath = pathEdges.has(key);
+        L.polyline([s, e], {
+          color: onPath ? '#ffe08a' : '#8ec5ff',
+          weight: onPath ? 3 : 2,
+          opacity: onPath ? 0.95 : 0.5,
+          dashArray: onPath ? null : '5 5'
         }).addTo(state.routeLayer);
-      }
+      });
     });
+    // HQ crown marker
+    const ctr = territoryCenterLatLng(hq);
+    if (ctr) {
+      const icon = L.divIcon({ className: '', html: '<div style="font-size:18px;text-shadow:0 1px 4px #000;line-height:1;">👑</div>', iconSize: [20, 20], iconAnchor: [10, 10] });
+      state.hqMarker = L.marker(ctr, { icon, interactive: false }).addTo(state.map);
+    }
   }
 
-  function ensureHqIcon() {
-    return L.divIcon({
-      className: 'eco-war-hq-icon',
-      html: '<div style="font-size:18px; text-shadow:0 1px 3px #000;">👑</div>',
-      iconSize: [20, 20],
-      iconAnchor: [10, 10]
-    });
-  }
-
-  function renderHqMarker() {
+  // ─── Territory Click ─────────────────────────────────────────────────────────
+  function onTerritoryClick(name) {
     const room = state.currentRoom;
-    const hq = room && Array.isArray(room.selectedTerritories) && room.selectedTerritories.length
-      ? (room.hqTerritory || room.selectedTerritories[0] || '')
-      : '';
-    if (!hq || !state.map || !state.territoryByName.has(hq)) {
-      if (state.hqMarker) {
-        state.map.removeLayer(state.hqMarker);
-        state.hqMarker = null;
-      }
-      return;
+    const status = room ? room.status : 'lobby';
+    if (status === 'prep' || status === 'playing') {
+      openMenu(name); return;
     }
-    const center = territoryCenterByName(hq);
-    if (!center) return;
-    if (!state.hqMarker) {
-      state.hqMarker = L.marker(center, {
-        icon: ensureHqIcon(),
-        interactive: false,
-        keyboard: false
-      }).addTo(state.map);
+    // Lobby — toggle for defender
+    if (state.role === 'attacker') { openMenu(name); return; }
+    if (state.selectedSet.has(name)) {
+      state.selectedSet.delete(name);
     } else {
-      state.hqMarker.setLatLng(center);
+      state.selectedSet.add(name);
     }
+    updateAllStyles();
+    renderRoutes();
+    renderSidebar();
+    socketCtrl.syncSelection();
   }
 
-  function toggleTerritory(name) {
-    if (state.role && state.role !== 'defender') return;
-    if (!state.armedForDefenderCreate && !state.currentRoom) return;
-    if (state.selectedTerritories.has(name)) state.selectedTerritories.delete(name);
-    else state.selectedTerritories.add(name);
-    renderSelectionLocally();
-    lobbyView.renderSelectionSummary();
-    socketController.syncSelectionIfAllowed();
+  // ─── Map Initialisation ───────────────────────────────────────────────────────
+  function readTradeRoutes(row) {
+    const tr = row['Trading Routes'] || row.tradingRoutes || row.trade_routes;
+    return Array.isArray(tr) ? tr.map(String) : [];
   }
 
-  const selectionController = {
-    initMapLayers(territories) {
-      territories.forEach(function (t) {
-        state.territoryByName.set(t.name, t);
-        const b = boundsFromWorldRect(t);
-        const layer = L.rectangle(b, styleForTerritoryName(t.name));
-        layer.on('click', function () {
-          toggleTerritory(t.name);
-        });
-        layer.bindTooltip(territoryTooltipHtml(t.name), { sticky: true, direction: 'auto' });
-        layer.on('mouseover', function () {
-          layer.setTooltipContent(territoryTooltipHtml(t.name));
-        });
-        layer.addTo(state.map);
-        state.layerByName.set(t.name, layer);
-      });
-    },
-    applyServerSelection(list) {
-      state.selectedTerritories = new Set(Array.isArray(list) ? list : []);
-      renderSelectionLocally();
-      lobbyView.renderSelectionSummary();
-    }
-  };
-
-  const lobbyView = {
-    renderRoom(room) {
-      if (!room) return;
-      els.lobbyOverlay.style.display = 'block';
-      els.roomCodeText.textContent = room.id || '------';
-      els.roleText.textContent = 'Role: ' + (state.role || '-');
-      els.gameStatusText.textContent = 'Status: ' + room.status;
-      els.readyStateText.textContent =
-        'Defender ready: ' + room.defenderReady + ' | Attacker ready: ' + room.attackerReady;
-      const tickMs = typeof room.tickIntervalMs === 'number' ? room.tickIntervalMs : 60000;
-      if (els.tickIntervalText) {
-        els.tickIntervalText.textContent =
-          'Resource tick: ' + Math.round(tickMs / 1000) + 's (server)';
-      }
-      const routeMode = room.routeMode === 'cheapest' ? 'cheapest' : 'fastest';
-      const routeInputs = document.querySelectorAll('input[name="routeMode"]');
-      for (let ri = 0; ri < routeInputs.length; ri++) {
-        const inp = routeInputs[ri];
-        inp.checked = inp.value === routeMode;
-        inp.disabled = state.role !== 'defender';
-      }
-      const prodMult = Number(room.productionMultiplier);
-      const prodOk = Number.isFinite(prodMult) ? prodMult : 1;
-      if (els.productionMultText) {
-        els.productionMultText.textContent = Math.round(prodOk * 100) + '%';
-      }
-      const canEcoSettings = state.role === 'defender' && !!room.id;
-      if (els.prodMultDownBtn) {
-        els.prodMultDownBtn.disabled = !canEcoSettings || prodOk <= PRODUCTION_MULT_MIN + 0.001;
-      }
-      if (els.prodMultUpBtn) {
-        els.prodMultUpBtn.disabled = !canEcoSettings || prodOk >= PRODUCTION_MULT_MAX - 0.001;
-      }
-      if (typeof room.prepSecondsRemaining === 'number' && room.status === 'prep') {
-        els.countdownText.textContent = 'Prep countdown: ' + room.prepSecondsRemaining + 's';
-      } else {
-        els.countdownText.textContent = 'Prep countdown: -';
-      }
-      const showResources = room.status === 'prep' || room.status === 'playing' || state.lastTickPayload;
-      els.resourcesPanel.style.display = showResources ? 'block' : 'none';
-      const showUpgradeButton = (room.status === 'prep' || room.status === 'playing') && state.role === 'defender';
-      els.upgradeMenuBtn.style.display = showUpgradeButton ? 'block' : 'none';
-      const showReadOnlyUpgrades = room.status === 'prep' || room.status === 'playing';
-      els.upgradeReadOnlyPanel.style.display = showReadOnlyUpgrades ? 'block' : 'none';
-      upgradeMenuController.renderReadOnlyList(room);
-      upgradeMenuController.hydrateTerritoryOptions(room);
-      upgradeMenuController.render();
-      this.renderSelectionSummary();
-      this.updateReadyButton(room);
-      renderTradeRoutesOverlay();
-    },
-    renderSelectionSummary() {
-      const list = selectedArray();
-      els.selectionCountText.textContent = 'Selected territories: ' + list.length;
-      els.territoryList.innerHTML = list.slice(0, 30).map(function (name) {
-        return '<li>' + name + '</li>';
-      }).join('');
-    },
-    updateReadyButton(room) {
-      const canReady = !!(
-        room &&
-        state.role &&
-        room.status === 'lobby' &&
-        room.defenderSocketId &&
-        room.attackerSocketId
-      );
-      els.readyBtn.disabled = !canReady;
-    },
-    renderTick(payload) {
-      if (!payload) return;
-      const resources = payload.defenderResources || {};
-      els.resourcesPanel.style.display = 'block';
-      els.resEmeralds.textContent = fmt(resources.emeralds);
-      els.resWood.textContent = fmt(resources.wood);
-      els.resOre.textContent = fmt(resources.ore);
-      els.resCrops.textContent = fmt(resources.crops);
-      els.resFish.textContent = fmt(resources.fish);
-      const list = Array.isArray(payload.messages) ? payload.messages : [];
-      els.tickMessages.innerHTML = list.slice(0, 8).map(function (m) {
-        return '<li>' + m + '</li>';
-      }).join('');
-      if (typeof payload.nextTickInMs === 'number') {
-        startTickCountdownTimer(payload.nextTickInMs);
-      }
-      refreshTerritoryTooltips();
-    }
-  };
-
-  const upgradeMenuController = {
-    hydrateTerritoryOptions(room) {
-      const selected = (room && Array.isArray(room.selectedTerritories)) ? room.selectedTerritories : [];
-      const prev = state.selectedUpgradeTerritory;
-      els.upgradeTerritorySelect.innerHTML = selected.map(function (name) {
-        return '<option value="' + name + '">' + name + '</option>';
-      }).join('');
-      els.hqTerritorySelect.innerHTML = selected.map(function (name) {
-        return '<option value="' + name + '">' + name + '</option>';
-      }).join('');
-      if (selected.length === 0) {
-        state.selectedUpgradeTerritory = '';
-        els.setHqBtn.disabled = true;
-        return;
-      }
-      if (prev && selected.indexOf(prev) !== -1) {
-        state.selectedUpgradeTerritory = prev;
-      } else {
-        state.selectedUpgradeTerritory = selected[0];
-      }
-      els.upgradeTerritorySelect.value = state.selectedUpgradeTerritory;
-      const serverHq = room && room.hqTerritory && selected.indexOf(room.hqTerritory) !== -1
-        ? room.hqTerritory
-        : selected[0];
-      els.hqTerritorySelect.value = serverHq;
-    },
-    canSetHq() {
-      const room = state.currentRoom;
-      if (!room || (room.status !== 'prep' && room.status !== 'playing')) return false;
-      if (state.role !== 'defender') return false;
-      const selected = Array.isArray(room.selectedTerritories) ? room.selectedTerritories : [];
-      const target = els.hqTerritorySelect.value || '';
-      if (!target || selected.indexOf(target) === -1) return false;
-      return true;
-    },
-    getSelectedUpgradeLevel(category) {
-      const room = state.currentRoom || {};
-      const territory = state.selectedUpgradeTerritory;
-      const rows = room.territoryUpgrades || {};
-      const level = rows[territory] && Number.isFinite(rows[territory][category])
-        ? rows[territory][category]
-        : 0;
-      return Math.max(0, Math.min(11, parseInt(level || 0, 10) || 0));
-    },
-    canUpgrade(category) {
-      const room = state.currentRoom;
-      if (!room || (room.status !== 'playing' && room.status !== 'prep')) return false;
-      if (state.role !== 'defender') return false;
-      if (!state.selectedUpgradeTerritory) return false;
-      const level = this.getSelectedUpgradeLevel(category);
-      if (level >= 11) return false;
-      return true;
-    },
-    renderCategory(category, cardEl, badgeEl, barEl, metaEl, btnEl) {
-      const level = this.getSelectedUpgradeLevel(category);
-      const nextCost = level < 11 && UPGRADE_COSTS[category]
-        ? (UPGRADE_COSTS[category][level + 1] || 0)
-        : 0;
-      const can = this.canUpgrade(category);
-      const maxed = level >= 11;
-      if (category === 'storage') {
-        const emeraldCost = level < 11 ? (STORAGE_COSTS.emeralds[level + 1] || 0) : 0;
-        const woodCost = level < 11 ? (STORAGE_COSTS.wood[level + 1] || 0) : 0;
-        metaEl.textContent = level >= 11
-          ? 'Level 11 · Maxed'
-          : 'Level ' + level + ' · Next cost ' + emeraldCost + ' emeralds + ' + woodCost + ' wood';
-      } else {
-        metaEl.textContent = level >= 11
-          ? 'Level 11 · Maxed'
-          : 'Level ' + level + ' · Hourly drain ' + nextCost + ' ' + UPGRADE_RESOURCE_BY_CATEGORY[category] + ' (inactive when insufficient)';
-      }
-      btnEl.disabled = !can;
-      badgeEl.textContent = 'Lv' + level;
-      badgeEl.classList.toggle('maxed', maxed);
-      renderSegBar(barEl, level, maxed);
-      cardEl.classList.remove('state-low', 'state-max');
-      if (maxed) cardEl.classList.add('state-max');
-      else if (!can) cardEl.classList.add('state-low');
-    },
-    renderNotices() {
-      els.upgradeNoticeList.innerHTML = state.upgradeNotices.map(function (m) {
-        return '<li>' + m + '</li>';
-      }).join('');
-    },
-    renderStorageDashboard(room) {
-      const container = document.getElementById('storageDashboardList');
-      if (!container) return;
-      if (!room || !Array.isArray(room.selectedTerritories) || room.selectedTerritories.length === 0) {
-        container.innerHTML = '<li class="meta">No selected territories.</li>';
-        return;
-      }
-      const hq = room.hqTerritory || room.selectedTerritories[0] || '';
-      const upgrades = room.territoryUpgrades || {};
-      const perStorage = room.perTerritoryStorage || {};
-      container.innerHTML = room.selectedTerritories.map(function (name) {
-        const row = perStorage[name] || { emeralds: 0, wood: 0, ore: 0, crops: 0, fish: 0 };
-        const level = upgrades[name] && Number.isFinite(upgrades[name].storage)
-          ? parseInt(upgrades[name].storage || 0, 10) || 0
-          : 0;
-        const isHq = name === hq;
-        const cap = getStorageCapacity(level, isHq);
-        const hqTag = isHq ? ' <strong>(HQ)</strong>' : '';
-        return (
-          '<li style="margin-bottom:8px;">' +
-          '<div><strong>' + name + '</strong>' + hqTag + ' · ST Lv' + level + '</div>' +
-          '<div style="font-size:12px;opacity:0.9;">' +
-          'E: ' + fmt(row.emeralds) + '/' + fmt(cap) + ' | ' +
-          'W: ' + fmt(row.wood) + '/' + fmt(cap) + ' | ' +
-          'O: ' + fmt(row.ore) + '/' + fmt(cap) + ' | ' +
-          'C: ' + fmt(row.crops) + '/' + fmt(cap) + ' | ' +
-          'F: ' + fmt(row.fish) + '/' + fmt(cap) +
-          '</div>' +
-          '</li>'
-        );
-      }).join('');
-    },
-    renderReadOnlyList(room) {
-      if (!room || room.status !== 'playing') {
-        els.upgradeReadOnlyList.innerHTML = '';
-        return;
-      }
-      const upgrades = room.territoryUpgrades || {};
-      const selected = Array.isArray(room.selectedTerritories) ? room.selectedTerritories : [];
-      els.upgradeReadOnlyList.innerHTML = selected.map(function (name) {
-        const row = upgrades[name] || {};
-        const d = parseInt(row.damage || 0, 10) || 0;
-        const a = parseInt(row.attackSpeed || 0, 10) || 0;
-        const h = parseInt(row.health || 0, 10) || 0;
-        const def = parseInt(row.defense || 0, 10) || 0;
-        const st = parseInt(row.storage || 0, 10) || 0;
-        return '<li>' + name + ': D' + d + ' / AS' + a + ' / H' + h + ' / DEF' + def + ' / ST' + st + '</li>';
-      }).join('');
-    },
-    render() {
-      const room = state.currentRoom;
-      const isDefender = state.role === 'defender';
-      els.upgradeRoleHint.textContent = isDefender
-        ? 'Defender mode: upgrades are interactive.'
-        : 'Attacker view: read-only upgrade levels.';
-      this.renderCategory('damage', els.upgradeDamageCard, els.upgradeDamageBadge, els.upgradeDamageBar, els.upgradeDamageMeta, els.upgradeDamageBtn);
-      this.renderCategory('attackSpeed', els.upgradeAttackSpeedCard, els.upgradeAttackSpeedBadge, els.upgradeAttackSpeedBar, els.upgradeAttackSpeedMeta, els.upgradeAttackSpeedBtn);
-      this.renderCategory('health', els.upgradeHealthCard, els.upgradeHealthBadge, els.upgradeHealthBar, els.upgradeHealthMeta, els.upgradeHealthBtn);
-      this.renderCategory('defense', els.upgradeDefenseCard, els.upgradeDefenseBadge, els.upgradeDefenseBar, els.upgradeDefenseMeta, els.upgradeDefenseBtn);
-      this.renderCategory('storage', els.upgradeStorageCard, els.upgradeStorageBadge, els.upgradeStorageBar, els.upgradeStorageMeta, els.upgradeStorageBtn);
-      this.renderStorageDashboard(room);
-      this.renderNotices();
-      if (!room || (room.status !== 'playing' && room.status !== 'prep')) {
-        els.upgradeDamageBtn.disabled = true;
-        els.upgradeAttackSpeedBtn.disabled = true;
-        els.upgradeHealthBtn.disabled = true;
-        els.upgradeDefenseBtn.disabled = true;
-        els.upgradeStorageBtn.disabled = true;
-      }
-      if (!isDefender) {
-        els.upgradeDamageBtn.disabled = true;
-        els.upgradeAttackSpeedBtn.disabled = true;
-        els.upgradeHealthBtn.disabled = true;
-        els.upgradeDefenseBtn.disabled = true;
-        els.upgradeStorageBtn.disabled = true;
-      }
-      els.setHqBtn.disabled = !this.canSetHq();
-    },
-    open() {
-      if (!state.currentRoom || (state.currentRoom.status !== 'playing' && state.currentRoom.status !== 'prep')) return;
-      els.upgradeModal.style.display = 'flex';
-      this.render();
-    },
-    close() {
-      els.upgradeModal.style.display = 'none';
-    },
-    apply(category) {
-      if (!state.currentRoom) return;
-      if (!this.canUpgrade(category)) {
-        playSfx('error');
-        pushUpgradeNotice('Upgrade blocked for ' + category + ' (insufficient resources or maxed)');
-        this.renderNotices();
-        return;
-      }
-      state.socket.emit('upgrade:apply', {
-        territoryName: state.selectedUpgradeTerritory,
-        category
-      }, function (resp) {
-        if (!resp || !resp.ok) {
-          playSfx('error');
-          alert((resp && resp.error) || 'Upgrade failed.');
-          return;
-        }
-        playSfx('success');
-      });
-    },
-    setHqTerritory() {
-      if (!state.currentRoom) return;
-      if (!this.canSetHq()) {
-        alert('HQ can only be changed by defender during prep/playing.');
-        return;
-      }
-      const territoryName = (els.hqTerritorySelect.value || '').trim();
-      state.socket.emit('setHqTerritory', { territoryName }, function (resp) {
-        if (!resp || !resp.ok) {
-          alert((resp && resp.error) || 'Failed to set HQ.');
-          return;
-        }
-        setStatus('HQ moved to ' + resp.hqTerritory);
-        pushUpgradeNotice('HQ moved to ' + resp.hqTerritory);
-        upgradeMenuController.renderNotices();
-      });
-    }
-  };
-
-  const socketController = {
-    persistSession(roomId, role, playerToken) {
-      if (!/^\d{6}$/.test(roomId || '') || !playerToken) return;
-      saveRoomSession({
-        roomId,
-        role,
-        playerToken,
-        socketBase: state.socketBase || ''
-      });
-    },
-    tryResumeSession() {
-      if (!state.socket || !state.connected || state.resumeInFlight) return;
-      if (state.currentRoom && state.currentRoom.id) return;
-      const session = loadRoomSession();
-      if (!session) return;
-      state.resumeInFlight = true;
-      state.socket.emit('resumeRoom', {
-        roomId: session.roomId,
-        playerToken: session.playerToken
-      }, function (resp) {
-        state.resumeInFlight = false;
-        if (!resp || !resp.ok) {
-          clearRoomSession();
-          setStatus('Connected to room server');
-          return;
-        }
-        state.role = resp.role;
-        setStatus('Session resumed: ' + resp.roomId + ' (' + resp.role + ')');
-      });
-    },
-    init() {
-      const socketBase = getEcoWarSocketBase();
-      const sharedToken = getEcoWarSharedToken();
-      if (!socketBase) {
-        state.connected = false;
-        setStatus(
-          'Eco War needs a Socket.io server (not available on Vercel). Deploy server/proxy.js to Railway, Render, Fly.io, etc., then add <meta name="eco-war-socket-url" content="https://your-api.example.com"> to war.html.'
-        );
-        return;
-      }
-      state.socketBase = socketBase;
-      const socketOptions = { transports: ['websocket', 'polling'] };
-      if (sharedToken) {
-        socketOptions.auth = { token: sharedToken };
-      }
-      state.socket = io(socketBase, socketOptions);
-      state.socket.on('connect', function () {
-        state.connected = true;
-        setStatus('Connected to room server');
-        socketController.tryResumeSession();
-      });
-      state.socket.on('connect_error', function () {
-        state.connected = false;
-        setStatus(
-          'Room server not reachable at ' +
-            socketBase +
-            '. Check the URL, CORS, and that the process is running (local: npm start in server/ on port ' +
-            SOCKET_DEV_PORT +
-            ').'
-        );
-      });
-      state.socket.on('disconnect', function () {
-        state.connected = false;
-        setStatus('Disconnected from room server');
-      });
-      state.socket.on('roomError', function (payload) {
-        if (payload && payload.error) alert(payload.error);
-      });
-      state.socket.on('roomState', function (room) {
-        state.currentRoom = room;
-        if (!room) {
-          clearRoomSession();
-        }
-        const inferredRole = inferRoleFromRoom(room);
-        if (inferredRole) {
-          state.role = inferredRole;
-        }
-        if (room && Array.isArray(room.selectedTerritories)) {
-          selectionController.applyServerSelection(room.selectedTerritories);
-        }
-        lobbyView.renderRoom(room);
-        refreshTerritoryTooltips();
-      });
-      state.socket.on('prepTick', function (payload) {
-        if (!state.currentRoom) return;
-        state.currentRoom.prepSecondsRemaining = payload.secondsRemaining;
-        state.currentRoom.status = 'prep';
-        lobbyView.renderRoom(state.currentRoom);
-      });
-      state.socket.on('statusChanged', function (payload) {
-        if (!state.currentRoom) return;
-        state.currentRoom.status = payload.status;
-        lobbyView.renderRoom(state.currentRoom);
-      });
-      state.socket.on('tick:update', function (payload) {
-        state.lastTickPayload = payload;
-        if (state.currentRoom && payload && payload.perTerritoryStorage) {
-          state.currentRoom.perTerritoryStorage = payload.perTerritoryStorage;
-        }
-        lobbyView.renderTick(payload);
-      });
-      state.socket.on('upgrade:applied', function (payload) {
-        const line = payload.territoryName + ' · ' + payload.category + ' -> Lv' + payload.level;
-        pushUpgradeNotice(line);
-        upgradeMenuController.render();
-      });
-    },
-    createRoom() {
-      if (!state.connected) return alert('Socket server is not connected.');
-      state.socket.emit('createRoom', {}, function (resp) {
-        if (!resp || !resp.ok) {
-          alert((resp && resp.error) || 'Failed to create room.');
-          return;
-        }
-        state.role = 'defender';
-        state.armedForDefenderCreate = false;
-        els.createGameBtn.textContent = 'Create 1v1 Eco War Game';
-        setStatus('Room created: ' + resp.roomId);
-        socketController.persistSession(resp.roomId, 'defender', resp.playerToken || '');
-        socketController.syncSelectionIfAllowed();
-      });
-    },
-    joinRoom(roomId) {
-      if (!state.connected) return alert('Socket server is not connected.');
-      if (!/^\d{6}$/.test(roomId)) return alert('Room code must be exactly 6 digits.');
-      state.socket.emit('joinRoom', { roomId }, function (resp) {
-        if (!resp || !resp.ok) {
-          alert((resp && resp.error) || 'Failed to join room.');
-          return;
-        }
-        state.role = 'attacker';
-        setStatus('Joined room: ' + resp.roomId);
-        socketController.persistSession(resp.roomId, 'attacker', resp.playerToken || '');
-      });
-    },
-    setReady() {
-      if (!state.currentRoom) return;
-      const effectiveRole = inferRoleFromRoom(state.currentRoom) || state.role;
-      if (effectiveRole !== 'defender' && effectiveRole !== 'attacker') {
-        alert('Role is not synced yet. Wait a moment and try again.');
-        return;
-      }
-      const roleKey = effectiveRole === 'defender' ? 'defenderReady' : 'attackerReady';
-      const nextReady = !state.currentRoom[roleKey];
-      state.socket.emit('setReady', { ready: nextReady }, function (resp) {
-        if (!resp || !resp.ok) {
-          alert((resp && resp.error) || 'Failed to update ready state.');
-        }
-      });
-    },
-    syncSelectionIfAllowed() {
-      if (!state.currentRoom || state.role !== 'defender') return;
-      state.socket.emit('updateSelection', {
-        selectedTerritories: selectedArray()
-      }, function (resp) {
-        if (resp && resp.ok === false && resp.error) {
-          setStatus(resp.error);
-        }
-      });
-    }
-  };
+  function initMapLayers(territories) {
+    territories.forEach(t => {
+      state.territoryByName.set(t.name, t);
+      const layer = L.rectangle(boundsFromWorldRect(t), styleFor(t.name));
+      layer.on('click', () => onTerritoryClick(t.name));
+      layer.bindTooltip(t.name, { sticky: true, direction: 'auto', className: 'terr-tooltip' });
+      layer.addTo(state.map);
+      state.layerByName.set(t.name, layer);
+    });
+  }
 
   async function initMap() {
     const img = new Image();
     img.src = MAP_IMAGE_URL;
-    await new Promise(function (resolve, reject) {
-      img.onload = resolve;
-      img.onerror = function () {
-        reject(new Error('main-map.webp not found for war map'));
-      };
+    await new Promise(res => { img.onload = res; img.onerror = res; });
+    const imgW = img.naturalWidth  || 1024;
+    const imgH = img.naturalHeight || 1024;
+    state.geo = { imgW, imgH };
+
+    state.map = L.map(document.getElementById('map'), {
+      crs: L.CRS.Simple, minZoom: -4, maxZoom: 2,
+      zoomControl: true, attributionControl: false
     });
-    state.geo = { imgW: img.naturalWidth, imgH: img.naturalHeight };
-    const bounds = L.latLngBounds([[0, 0], [state.geo.imgH, state.geo.imgW]]);
-    const overlayBounds = getImageOverlayBounds(state.geo.imgW, state.geo.imgH);
-    state.map = L.map('map', {
-      crs: L.CRS.Simple,
-      minZoom: -2,
-      maxZoom: 4,
-      zoomSnap: 0.25,
-      attributionControl: false
-    });
-    L.imageOverlay(MAP_IMAGE_URL, overlayBounds).addTo(state.map);
+    const bounds = L.latLngBounds([[0, 0], [imgH, imgW]]);
+    L.imageOverlay(MAP_IMAGE_URL, bounds).addTo(state.map);
     state.map.fitBounds(bounds);
     state.routeLayer = L.layerGroup().addTo(state.map);
 
-    const staticData = await territoryDataAdapter.loadStatic();
-    const territories = territoryDataAdapter.parseTerritories(staticData);
-    selectionController.initMapLayers(territories);
-    applyLiveOwnership();
-  }
-
-  function bindUi() {
-    els.createGameBtn.addEventListener('click', function () {
-      if (!state.role && !state.currentRoom && !state.armedForDefenderCreate) {
-        state.armedForDefenderCreate = true;
-        els.createGameBtn.textContent = 'Create Room';
-        state.role = 'defender';
-        setStatus('Defender mode armed. Select territories, then click Create Room.');
-        return;
-      }
-      if (state.armedForDefenderCreate && !state.currentRoom) {
-        socketController.createRoom();
-        return;
-      }
-      alert('You are already in a room. Open a new tab for another game.');
-    });
-
-    els.joinGameBtn.addEventListener('click', function () {
-      const code = (els.joinCodeInput.value || '').trim();
-      socketController.joinRoom(code);
-    });
-
-    els.readyBtn.addEventListener('click', function () {
-      if (!state.currentRoom) return;
-      socketController.setReady();
-    });
-
-    document.querySelectorAll('input[name="routeMode"]').forEach(function (radio) {
-      radio.addEventListener('change', function () {
-        if (state.role !== 'defender' || !state.socket || !state.currentRoom || !this.checked) return;
-        state.socket.emit('eco:setRouteMode', { routeMode: this.value }, function (resp) {
-          if (!resp || !resp.ok) {
-            alert((resp && resp.error) || 'Failed to set route mode.');
+    try {
+      const res  = await fetch(STATIC_TERRITORIES_URL);
+      const data = await res.json();
+      const territories = [];
+      Object.keys(data).forEach(name => {
+        const row = data[name] || {};
+        const loc = row.Location || row.location;
+        if (!loc || !loc.start || !loc.end) return;
+        territories.push({
+          name,
+          minX: Math.min(loc.start[0], loc.end[0]),
+          maxX: Math.max(loc.start[0], loc.end[0]),
+          minZ: Math.min(loc.start[1], loc.end[1]),
+          maxZ: Math.max(loc.start[1], loc.end[1]),
+          tradeRoutes: readTradeRoutes(row),
+          resources: {
+            emeralds: parseInt((row.resources || {}).emeralds || 0, 10) || 0,
+            wood:     parseInt((row.resources || {}).wood     || 0, 10) || 0,
+            ore:      parseInt((row.resources || {}).ore      || 0, 10) || 0,
+            crops:    parseInt((row.resources || {}).crops    || 0, 10) || 0,
+            fish:     parseInt((row.resources || {}).fish     || 0, 10) || 0,
           }
         });
       });
+      initMapLayers(territories);
+    } catch (e) {
+      console.error('Territory data load failed', e);
+    }
+  }
+
+  // ─── Sidebar ──────────────────────────────────────────────────────────────────
+  function renderSidebar() {
+    const room = state.currentRoom;
+    if (!room) { E.sidebar.style.display = 'none'; return; }
+    E.sidebar.style.display = 'flex';
+
+    E.roomCode.textContent = room.id || '------';
+    E.roleText.textContent = state.role ? state.role.toUpperCase() : '';
+
+    const status = room.status || 'lobby';
+    E.statusBadge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+    E.statusBadge.className = 'status-badge' + (status === 'prep' ? ' prep' : status === 'playing' ? ' playing' : '');
+
+    // Prep countdown
+    if (status === 'prep' && typeof room.prepSecondsRemaining === 'number' && room.prepSecondsRemaining !== null) {
+      E.prepCd.style.display = 'block';
+      E.prepCd.textContent = '⏱ Prep ends in: ' + room.prepSecondsRemaining + 's';
+    } else {
+      E.prepCd.style.display = 'none';
+    }
+
+    // Ready section
+    E.readySection.style.display = status === 'lobby' ? 'block' : 'none';
+    E.readyStateText.textContent = 'Defender: ' + (room.defenderReady ? '✅' : '❌') + '  |  Attacker: ' + (room.attackerReady ? '✅' : '❌');
+    const canReady = status === 'lobby' && !!state.role && !!room.defenderSocketId && !!room.attackerSocketId;
+    E.readyBtn.disabled = !canReady;
+    const myReady = state.role === 'defender' ? room.defenderReady : room.attackerReady;
+    E.readyBtn.textContent = myReady ? '✅ UNREADY' : 'READY';
+
+    // Resources panel
+    const showRes = status === 'prep' || status === 'playing';
+    E.resPanel.style.display = showRes ? 'block' : 'none';
+
+    // Tower stats (attacker view)
+    const showTower = showRes && state.role === 'attacker';
+    E.towerPanel.style.display = showTower ? 'block' : 'none';
+    if (showTower && state.warEstimates && state.warEstimates.towerStats) {
+      const ts = state.warEstimates.towerStats;
+      E.towerHP.textContent   = fmt(ts.towerHP);
+      E.towerEHP.textContent  = fmt(ts.effectiveHP);
+      E.towerConn.textContent = ts.connections;
+      E.towerHLv.textContent  = ts.healthLevel;
+      E.towerDLv.textContent  = ts.defenseLevel;
+    }
+
+    // Territory list
+    const selected = room.selectedTerritories || Array.from(state.selectedSet);
+    E.selCount.textContent = selected.length;
+    E.terrList.innerHTML = selected.slice(0, 50).map(name => {
+      const isHq = name === room.hqTerritory;
+      const upgrades = room.territoryUpgrades && room.territoryUpgrades[name];
+      let badge = '';
+      if (upgrades) {
+        const parts = [];
+        if (upgrades.damage)      parts.push('D' + upgrades.damage);
+        if (upgrades.attackSpeed) parts.push('A' + upgrades.attackSpeed);
+        if (upgrades.health)      parts.push('H' + upgrades.health);
+        if (upgrades.defense)     parts.push('DEF' + upgrades.defense);
+        if (parts.length) badge = `<span class="terr-badge">${parts.join(' ')}</span>`;
+      }
+      return `<div class="terr-item">${isHq ? '👑 ' : ''}<span style="flex:1;">${name}</span>${badge}</div>`;
+    }).join('');
+
+    // Click hint
+    if (status === 'lobby' && state.role === 'defender') {
+      E.clickHint.textContent = 'Click territories to select/deselect';
+    } else if (status === 'prep' || status === 'playing') {
+      E.clickHint.textContent = 'Click territory on map to manage';
+    } else {
+      E.clickHint.textContent = '';
+    }
+    E.openManageBtn.style.display = (showRes && selected.length) ? 'block' : 'none';
+
+    // Attacker war panel
+    const showWarPanel = status === 'prep' && state.role === 'attacker';
+    E.warPanel.style.display = showWarPanel ? 'flex' : 'none';
+    if (showWarPanel) renderWarPanel();
+
+    // War countdown
+    if (status === 'playing' && room.warStartedAt && room.warTimeSeconds) {
+      startWarCountdown(room.warStartedAt, room.warTimeSeconds);
+    }
+  }
+
+  // ─── War Panel ───────────────────────────────────────────────────────────────
+  function renderWarPanel() {
+    const estimates = state.warEstimates && state.warEstimates.estimates;
+    let html = '';
+    Object.entries(WAR_TYPES).forEach(([type, def]) => {
+      const est = estimates && estimates[type];
+      const secs = est ? est.warTimeSeconds : null;
+      const timeStr = secs != null ? fmtTime(secs) : '—';
+      const tcls = secs == null ? '' : secs < 60 ? 'fast' : secs < 300 ? 'mid' : 'slow';
+      const sel = state.selectedWarType === type;
+      html += `<div class="war-type-card${sel ? ' sel' : ''}" data-type="${type}">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="font-size:16px;">${def.icon}</span>
+          <span class="wt-name" style="color:${def.color};">${def.label}</span>
+        </div>
+        <div class="wt-dps">${fmt(def.dps)} DPS</div>
+        <div class="wt-time ${tcls}">⏱ ${timeStr}</div>
+      </div>`;
+    });
+    E.warTypeCards.innerHTML = html;
+    E.warTypeCards.querySelectorAll('.war-type-card').forEach(card => {
+      card.addEventListener('click', function () {
+        state.selectedWarType = this.dataset.type;
+        renderWarPanel();
+        socketCtrl.selectWarType(this.dataset.type);
+      });
+    });
+  }
+
+  // ─── War Countdown ────────────────────────────────────────────────────────────
+  function startWarCountdown(startedAt, totalSecs) {
+    if (state.warCdTimer) clearInterval(state.warCdTimer);
+    E.warCdBar.style.display = 'block';
+    function paint() {
+      const rem = Math.max(0, Math.ceil(totalSecs - (Date.now() - startedAt) / 1000));
+      E.warCdText.textContent = fmtTime(rem);
+      if (rem <= 0) { clearInterval(state.warCdTimer); state.warCdTimer = null; }
+    }
+    paint();
+    state.warCdTimer = setInterval(paint, 500);
+  }
+
+  // ─── War Result ───────────────────────────────────────────────────────────────
+  function showWarResult(result, stats) {
+    const atkWins = result === 'attacker_wins';
+    E.warResultHdr.className = 'war-result-hdr ' + (atkWins ? 'atk' : 'def');
+    E.warResultHdr.textContent = atkWins ? '⚔ TERRITORY CAPTURED!' : '🛡 DEFENSE HELD!';
+    if (stats) {
+      const wtn = WAR_TYPES[stats.attackerWarType];
+      E.warResultStats.innerHTML = [
+        ['HQ Territory', stats.hq || '—'],
+        ['Tower HP',     fmt(stats.towerHP)],
+        ['Effective HP', fmt(stats.effectiveHP)],
+        ['Connections',  `+${Math.round((1 + 0.3 * (stats.connections || 0)) * 100 - 100)}% bonus`],
+        ['Attacker',     wtn ? wtn.label : '—'],
+        ['Attacker DPS', fmt(stats.attackerDPS)],
+        ['War Duration', fmtTime(stats.warTimeSeconds || 0)],
+      ].map(([k, v]) => `<div class="wr-stat"><span class="wr-key">${k}</span><span class="wr-val">${v}</span></div>`).join('');
+    }
+    E.warResultOver.style.display = 'flex';
+  }
+
+  // ─── Tick Countdown ────────────────────────────────────────────────────────────
+  function startTickCd(nextMs) {
+    if (state.tickCdTimer) clearInterval(state.tickCdTimer);
+    const endsAt = Date.now() + (nextMs || 0);
+    function paint() {
+      const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+      E.tickCd.textContent = '⏱ Next tick in: ' + rem + 's';
+      if (rem === 0) { clearInterval(state.tickCdTimer); state.tickCdTimer = null; }
+    }
+    paint();
+    state.tickCdTimer = setInterval(paint, 250);
+  }
+
+  // ─── Territory Menu ───────────────────────────────────────────────────────────
+  function openMenu(name) {
+    state.activeMenu = name;
+    const room = state.currentRoom;
+    if (!room) return;
+    const selected = room.selectedTerritories || [];
+    E.tMenuSelect.innerHTML = selected.map(t =>
+      `<option value="${t}"${t === name ? ' selected' : ''}>${t}${t === room.hqTerritory ? ' 👑' : ''}</option>`
+    ).join('');
+    renderMenuContent();
+    E.tMenuOverlay.style.display = 'flex';
+  }
+  function closeMenu() { E.tMenuOverlay.style.display = 'none'; state.activeMenu = null; }
+  function refreshMenuIfOpen() {
+    if (state.activeMenu && E.tMenuOverlay.style.display !== 'none') renderMenuContent();
+  }
+
+  function renderMenuContent() {
+    const name = state.activeMenu;
+    const room = state.currentRoom;
+    if (!name || !room) return;
+    E.tMenuTitle.textContent = name + (name === room.hqTerritory ? ' 👑' : '');
+    const isDefender   = state.role === 'defender';
+    const interactive  = (room.status === 'prep' || room.status === 'playing') && isDefender;
+    const tab = state.activeTab;
+    if      (tab === 'upgrades') renderTabUpgrades(name, room, interactive);
+    else if (tab === 'bonuses')  renderTabBonuses(name, room, interactive);
+    else if (tab === 'storage')  renderTabStorage(name, room, interactive);
+    else if (tab === 'tax')      renderTabTax(name, room, interactive);
+    else if (tab === 'info')     renderTabInfo(name, room);
+  }
+
+  /* ── Tab: Upgrades ────────────────────────────────────────────────────────── */
+  function renderTabUpgrades(name, room, interactive) {
+    const upg = (room.territoryUpgrades && room.territoryUpgrades[name]) || {};
+    const cats = ['damage', 'attackSpeed', 'health', 'defense'];
+
+    let html = '<div class="upg-grid">';
+    cats.forEach(cat => {
+      const lv = parseInt(upg[cat] || 0);
+      const maxed = lv >= 11;
+      const drain = UPGRADE_COSTS_PER_LEVEL[lv] || 0;
+      const nextD = maxed ? 0 : (UPGRADE_COSTS_PER_LEVEL[lv + 1] || 0);
+      const bars  = Array.from({length: 11}, (_, i) => `<span class="${i < lv ? 'on' + (maxed ? ' maxed' : '') : ''}"></span>`).join('');
+      html += `<div class="upg-card${maxed ? ' maxed' : ''}">
+        <div class="upg-hdr">
+          <span class="upg-icon">${UPGRADE_ICON[cat]}</span>
+          <span class="upg-name">${UPGRADE_LABEL[cat]}</span>
+          <span class="upg-res">${UPGRADE_RESOURCE[cat]}</span>
+        </div>
+        <div class="upg-lv">
+          <span class="lv-badge${maxed ? ' maxed' : ''}">Lv${lv}</span>
+          <div class="seg-bar" style="flex:1;">${bars}</div>
+        </div>
+        <div class="upg-cost">Drain: ${drain ? fmt(drain) + ' ' + UPGRADE_RESOURCE[cat] + '/hr' : '—'}</div>
+        ${!maxed ? `<div class="upg-cost" style="color:#2a5020;">Next: ${fmt(nextD)}/hr</div>` : '<div class="upg-cost" style="color:#3a7020;">MAX LEVEL ★</div>'}
+        ${interactive && !maxed ? `<button class="mc-btn green upg-btn" data-cat="${cat}" style="width:100%;margin-top:4px;font-size:16px;">UPGRADE</button>` : ''}
+      </div>`;
     });
 
-    function adjustProductionMult(delta) {
-      if (state.role !== 'defender' || !state.socket || !state.currentRoom) return;
-      const cur = Number(state.currentRoom.productionMultiplier) || 1;
-      const next = Math.max(
-        PRODUCTION_MULT_MIN,
-        Math.min(PRODUCTION_MULT_MAX, Math.round((cur + delta) * 100) / 100)
-      );
-      state.socket.emit('eco:setProductionMultiplier', { multiplier: next }, function (resp) {
-        if (!resp || !resp.ok) {
-          alert((resp && resp.error) || 'Failed to set production buff.');
+    // Storage (full width)
+    const sl    = parseInt(upg.storage || 0);
+    const smaxed = sl >= 11;
+    const sbars = Array.from({length: 11}, (_, i) => `<span class="${i < sl ? 'on' + (smaxed ? ' maxed' : '') : ''}"></span>`).join('');
+    const isHq  = name === room.hqTerritory;
+    html += `<div class="stor-card">
+      <div class="upg-hdr"><span class="upg-icon">📦</span><span class="upg-name">Storage</span></div>
+      <div class="upg-lv">
+        <span class="lv-badge${smaxed ? ' maxed' : ''}">Lv${sl}/11</span>
+        <div class="seg-bar" style="flex:1;">${sbars}</div>
+      </div>
+      <div class="upg-cost">${isHq
+        ? 'HQ cap: ' + fmt(hqCap(sl, 'resource')) + ' resources / ' + fmt(hqCap(sl, 'emeralds')) + ' em'
+        : 'Non-HQ: unlimited pass-through storage'}</div>
+      ${interactive && !smaxed ? `<button class="mc-btn upg-btn" data-cat="storage" style="width:100%;margin-top:4px;font-size:16px;">UPGRADE STORAGE</button>` : ''}
+    </div>`;
+    html += '</div>';
+
+    // HQ Selector
+    if (interactive) {
+      const sel = (room.selectedTerritories || []).map(t =>
+        `<option value="${t}"${t === room.hqTerritory ? ' selected' : ''}>${t}</option>`
+      ).join('');
+      html += `<div class="hq-sel-box">
+        <div class="mc-label" style="margin-bottom:6px;">Set Guild HQ Territory</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select id="hqSelDd" style="flex:1;font-family:VT323,monospace;font-size:16px;background:#2d2418;color:#f0e0a0;border:2px solid #373737;padding:3px 6px;">${sel}</select>
+          <button id="setHqBtn" class="mc-btn green" style="font-size:16px;">Set HQ</button>
+        </div>
+      </div>`;
+    }
+
+    E.tMenuBody.innerHTML = html;
+    E.tMenuBody.querySelectorAll('.upg-btn').forEach(btn => {
+      btn.addEventListener('click', function () { socketCtrl.applyUpgrade(name, this.dataset.cat); });
+    });
+    if (interactive) {
+      const sb = E.tMenuBody.querySelector('#setHqBtn');
+      if (sb) sb.addEventListener('click', () => {
+        const dd = E.tMenuBody.querySelector('#hqSelDd');
+        if (dd) socketCtrl.setHqTerritory(dd.value);
+      });
+    }
+  }
+
+  /* ── Tab: Bonuses ─────────────────────────────────────────────────────────── */
+  function renderTabBonuses(name, room, interactive) {
+    const bon = (room.territoryBonuses && room.territoryBonuses[name]) || {};
+    let html = '';
+    const towerBonus = ['strongerMobs', 'multiAttack', 'aura', 'volley'];
+    const ecoBonus   = ['resourceProduction', 'emeraldProduction'];
+
+    html += '<div class="bonus-sec-hdr">🏰 Tower Bonuses</div><div class="bonus-list">';
+    towerBonus.forEach(key => {
+      const def = BONUS_DEFS[key];
+      const lv  = parseInt(bon[key] || 0);
+      const maxed = lv >= def.maxLevel;
+      html += bonusCard(name, key, def, lv, maxed, interactive);
+    });
+    html += '</div><div class="bonus-divider"></div>';
+    html += '<div class="bonus-sec-hdr">📈 Economy Bonuses</div><div class="bonus-list">';
+    ecoBonus.forEach(key => {
+      const def = BONUS_DEFS[key];
+      const lv  = parseInt(bon[key] || 0);
+      const maxed = lv >= def.maxLevel;
+      html += bonusCard(name, key, def, lv, maxed, interactive);
+    });
+    html += '</div>';
+
+    E.tMenuBody.innerHTML = html;
+    E.tMenuBody.querySelectorAll('.bonus-btn').forEach(btn => {
+      btn.addEventListener('click', function () { socketCtrl.applyBonus(name, this.dataset.key); });
+    });
+  }
+  function bonusCard(name, key, def, lv, maxed, interactive) {
+    const drain = def.costs[lv] || 0;
+    const nextD = maxed ? 0 : (def.costs[lv + 1] || 0);
+    return `<div class="bonus-card">
+      <div class="bonus-icon-cell">${def.icon}</div>
+      <div class="bonus-info">
+        <div class="bonus-name">${def.label} <span style="color:#4a7030;font-size:14px;">Lv${lv}/${def.maxLevel}</span></div>
+        <div class="bonus-desc">${def.desc}</div>
+        <div class="bonus-desc">Resource: ${def.resource} | Drain: ${drain ? fmt(drain) + '/hr' : '—'}</div>
+        ${!maxed ? `<div class="bonus-desc" style="color:#2a5020;">Next level: ${fmt(nextD)} ${def.resource}/hr</div>` : '<div class="bonus-desc" style="color:#3a7020;">MAX LEVEL ★</div>'}
+      </div>
+      ${interactive && !maxed ? `<button class="mc-btn green bonus-btn" data-key="${key}" style="font-size:20px;padding:4px 10px;">+</button>` : ''}
+    </div>`;
+  }
+
+  /* ── Tab: Storage ─────────────────────────────────────────────────────────── */
+  function renderTabStorage(name, room, interactive) {
+    const isHq = name === room.hqTerritory;
+    const upg   = (room.territoryUpgrades && room.territoryUpgrades[name]) || {};
+    const sl    = parseInt(upg.storage || 0);
+    const store  = (room.perTerritoryStorage && room.perTerritoryStorage[name]) || {};
+    let html = '';
+
+    if (isHq) {
+      html += '<div class="mc-label" style="margin-bottom:8px;">📦 HQ Resource Bank</div>';
+      const RES = [
+        { key:'emeralds', icon:'🟡', label:'Emeralds' },
+        { key:'wood',     icon:'🪵', label:'Wood'     },
+        { key:'ore',      icon:'⛏',  label:'Ore'      },
+        { key:'crops',    icon:'🌾', label:'Crops'    },
+        { key:'fish',     icon:'🐟', label:'Fish'     },
+      ];
+      RES.forEach(r => {
+        const val  = store[r.key] || 0;
+        const cap  = hqCap(sl, r.key);
+        const pct  = Math.min(100, (val / cap) * 100);
+        const over = val > cap;
+        const fcls = over ? 'danger' : pct > 75 ? 'warn' : '';
+        html += `<div class="hq-res-bar">
+          <div class="hq-res-lbl">
+            <span>${r.icon} ${r.label}</span>
+            <span class="${over ? 'over' : ''}">${fmt(val)} / ${fmt(cap)}</span>
+          </div>
+          <div class="mc-bar-bg"><div class="mc-bar-fill ${fcls}" style="width:${pct}%;"></div></div>
+        </div>`;
+      });
+    } else {
+      html += `<div class="passthrough-box">
+        📦 Non-HQ Territory<br>Resources pass through freely toward HQ each tick.<br>No local storage cap applied.
+      </div>`;
+      const transitKeys = Object.keys(store).filter(k => (store[k] || 0) > 0);
+      if (transitKeys.length) {
+        html += '<div class="mc-label" style="margin-bottom:6px;">In Transit</div>';
+        transitKeys.forEach(k => { html += `<div class="mc-small">${k}: ${fmt(store[k])}</div>`; });
+      }
+    }
+
+    // Storage upgrade button
+    const smaxed = sl >= 11;
+    html += `<div style="margin-top:10px;"><div class="upg-lv">
+      <span class="lv-badge${smaxed ? ' maxed' : ''}">Lv ${sl}/11</span>
+      <div class="seg-bar" style="flex:1;">${Array.from({length:11},(_,i)=>`<span class="${i<sl?'on'+(smaxed?' maxed':''):''}"></span>`).join('')}</div>
+    </div>`;
+    if (interactive && !smaxed && isHq) {
+      html += `<button class="mc-btn upg-btn" data-cat="storage" style="width:100%;margin-top:6px;font-size:16px;">UPGRADE STORAGE</button>`;
+    } else if (!isHq && interactive) {
+      html += `<button id="makeHqBtn" class="mc-btn blue" style="width:100%;margin-top:6px;font-size:18px;">👑 Set as HQ</button>`;
+    }
+    html += '</div>';
+
+    E.tMenuBody.innerHTML = html;
+    const ub = E.tMenuBody.querySelector('.upg-btn');
+    if (ub) ub.addEventListener('click', () => socketCtrl.applyUpgrade(name, 'storage'));
+    const hqb = E.tMenuBody.querySelector('#makeHqBtn');
+    if (hqb) hqb.addEventListener('click', () => socketCtrl.setHqTerritory(name));
+  }
+
+  /* ── Tab: Tax & Route ─────────────────────────────────────────────────────── */
+  function renderTabTax(name, room, interactive) {
+    const tax     = (room.territoryTaxRates && room.territoryTaxRates[name]) || { enemy: 0.30, ally: 0.10 };
+    const routeM  = (room.territoryRouteMode && room.territoryRouteMode[name]) || 'fastest';
+    const hq      = room.hqTerritory || '';
+    const selected = room.selectedTerritories || [];
+    const adj     = buildAdjacency(selected);
+    const path    = bfsHq(name, hq, adj);
+    const pathStr = path ? path.join(' → ') : 'No route to HQ';
+    const hops    = path ? path.length - 1 : '?';
+
+    let html = `<div class="mc-label" style="margin-bottom:6px;">Routing Mode</div>
+    <div class="route-toggle">
+      <button class="mc-btn${routeM === 'fastest' ? ' green' : ''} route-btn" data-mode="fastest" style="flex:1;">⚡ Fastest</button>
+      <button class="mc-btn${routeM === 'cheapest' ? ' green' : ''} route-btn" data-mode="cheapest" style="flex:1;">💰 Cheapest</button>
+    </div>
+    <div class="route-preview">
+      <span class="mc-small">Route to HQ:</span><br>
+      ${path ? path.join(' → ') : '<span style="color:#cc3333;">No route found</span>'}
+      ${path ? `<br><span class="mc-small">Hops: ${hops}</span>` : ''}
+    </div>
+    <div style="margin-top:12px;">
+      <div class="mc-label" style="margin-bottom:8px;">Tax Rates (informational display)</div>
+      <div class="tax-row">
+        <div class="tax-lbl">Enemy Tax: <span id="eTaxLbl">${Math.round(tax.enemy * 100)}%</span></div>
+        <input type="range" class="tax-slider" id="eTaxSlider" min="5" max="40" value="${Math.round(tax.enemy * 100)}" ${!interactive ? 'disabled' : ''}>
+      </div>
+      <div class="tax-row">
+        <div class="tax-lbl">Ally Tax: <span id="aTaxLbl">${Math.round(tax.ally * 100)}%</span></div>
+        <input type="range" class="tax-slider" id="aTaxSlider" min="5" max="40" value="${Math.round(tax.ally * 100)}" ${!interactive ? 'disabled' : ''}>
+      </div>
+      ${interactive ? '<button id="saveTaxBtn" class="mc-btn green" style="width:100%;font-size:16px;margin-top:6px;">💾 Save Tax Rates</button>' : ''}
+    </div>`;
+
+    E.tMenuBody.innerHTML = html;
+
+    E.tMenuBody.querySelectorAll('.route-btn').forEach(btn => {
+      btn.addEventListener('click', function () {
+        if (interactive) socketCtrl.setRouteMode(name, this.dataset.mode);
+      });
+    });
+    const es = E.tMenuBody.querySelector('#eTaxSlider');
+    const as = E.tMenuBody.querySelector('#aTaxSlider');
+    const el = E.tMenuBody.querySelector('#eTaxLbl');
+    const al = E.tMenuBody.querySelector('#aTaxLbl');
+    if (es) es.addEventListener('input', function () { el.textContent = this.value + '%'; });
+    if (as) as.addEventListener('input', function () { al.textContent = this.value + '%'; });
+    const sb = E.tMenuBody.querySelector('#saveTaxBtn');
+    if (sb) sb.addEventListener('click', () => socketCtrl.setTaxRate(name, parseFloat(es.value) / 100, parseFloat(as.value) / 100));
+  }
+
+  /* ── Tab: Info ────────────────────────────────────────────────────────────── */
+  function renderTabInfo(name, room) {
+    const t     = state.territoryByName.get(name);
+    const isHq  = name === room.hqTerritory;
+    const upg   = (room.territoryUpgrades  && room.territoryUpgrades[name])  || {};
+    const bon   = (room.territoryBonuses   && room.territoryBonuses[name])   || {};
+    const held  = room.territoryHeldSince  && room.territoryHeldSince[name];
+    const sel   = room.selectedTerritories || [];
+    const selSt = new Set(sel);
+    const routes = t ? t.tradeRoutes : [];
+    const conns = routes.filter(r => r !== name && selSt.has(r)).length;
+    const connMult = (1 + 0.3 * conns).toFixed(1);
+
+    let treaPct = 0;
+    if (held) treaPct = Math.min(100, Math.floor((Date.now() - held) / 3600000) * 5);
+
+    const resProdLv = bon.resourceProduction || 0;
+    const emProdLv  = bon.emeraldProduction  || 0;
+    const resMult   = 1 + (treaPct / 100) + (resProdLv * 0.10);
+    const emMult    = 1 + (treaPct / 100) + (emProdLv  * 0.10);
+
+    const RES_ICONS = { emeralds: '🟡', wood: '🪵', ore: '⛏', crops: '🌾', fish: '🐟' };
+
+    let html = `
+      <div class="info-row"><span class="info-key">📍 Territory</span><span class="info-val">${name}</span></div>
+      ${isHq ? '<div class="info-row"><span class="info-key">👑 Status</span><span class="info-val">Guild HQ</span></div>' : ''}
+      <div class="info-row"><span class="info-key">🔗 Connections</span><span class="info-val">${conns} (×${connMult} tower HP)</span></div>
+      <div class="info-row"><span class="info-key">⏱ Treasury Bonus</span><span class="info-val"><span class="treasury-badge">+${treaPct}%</span></span></div>
+      <div class="info-divider"></div>
+      <div class="mc-label" style="margin-bottom:6px;">Production / tick (base → actual)</div>`;
+
+    if (t) {
+      ['emeralds','wood','ore','crops','fish'].forEach(k => {
+        const base = t.resources[k] || 0;
+        if (!base) return;
+        const mult = k === 'emeralds' ? emMult : resMult;
+        const eff  = Math.floor(base * mult);
+        html += `<div class="info-row"><span class="info-key">${RES_ICONS[k]} ${k}</span><span class="info-val">${fmt(base)} → ${fmt(eff)}</span></div>`;
+      });
+    }
+
+    const upgRadar = ['damage','attackSpeed','health','defense'].filter(c => upg[c]);
+    const bonRadar = Object.keys(BONUS_DEFS).filter(k => bon[k]);
+    if (upgRadar.length || bonRadar.length) {
+      html += `<div class="info-divider"></div><div class="mc-label" style="margin-bottom:6px;">Upgrades & Bonuses</div>`;
+      upgRadar.forEach(c => {
+        html += `<div class="info-row"><span class="info-key">${UPGRADE_ICON[c]} ${UPGRADE_LABEL[c]}</span><span class="info-val">Lv${upg[c]}/11</span></div>`;
+      });
+      bonRadar.forEach(k => {
+        const def = BONUS_DEFS[k];
+        html += `<div class="info-row"><span class="info-key">${def.icon} ${def.label}</span><span class="info-val">Lv${bon[k]}/${def.maxLevel}</span></div>`;
+      });
+    }
+
+    E.tMenuBody.innerHTML = html;
+  }
+
+  // ─── Socket Controller ────────────────────────────────────────────────────────
+  const socketCtrl = {
+    connect() {
+      const base = getSocketBase();
+      if (!base) { E.statusText.textContent = 'No socket URL'; return; }
+      state.socketBase = base;
+      const token = getSharedToken();
+      state.socket = io(base, { auth: token ? { token } : {}, transports: ['websocket', 'polling'] });
+
+      state.socket.on('connect', () => {
+        state.connected = true;
+        E.statusText.textContent = '🟢 ' + base.replace('https://', '').replace('http://', '');
+        this.tryResume();
+      });
+      state.socket.on('disconnect', () => {
+        state.connected = false;
+        E.statusText.textContent = '🔴 Disconnected';
+      });
+
+      state.socket.on('roomState', room => {
+        state.currentRoom = room;
+        if (!state.role) state.role = inferRole(room);
+        // Sync local selectedSet from server
+        state.selectedSet = new Set(room.selectedTerritories || []);
+        renderSidebar();
+        updateAllStyles();
+        renderRoutes();
+        refreshMenuIfOpen();
+      });
+
+      state.socket.on('tick:update', payload => {
+        const res = payload.defenderResources || {};
+        E.resEm.textContent = fmt(res.emeralds);
+        E.resWo.textContent = fmt(res.wood);
+        E.resOr.textContent = fmt(res.ore);
+        E.resCr.textContent = fmt(res.crops);
+        E.resFi.textContent = fmt(res.fish);
+        const msgs = payload.messages || [];
+        E.tickMsgs.innerHTML = msgs.slice(0, 8).map(m => `<li style="font-size:11px;color:#f8d9a7;">${m}</li>`).join('');
+        if (payload.nextTickInMs) startTickCd(payload.nextTickInMs);
+        refreshMenuIfOpen();
+      });
+
+      state.socket.on('prepTick', payload => {
+        if (state.currentRoom) {
+          state.currentRoom.prepSecondsRemaining = payload.secondsRemaining;
+          if (payload.warEstimates) state.warEstimates = payload.warEstimates;
+        }
+        E.prepCd.style.display = 'block';
+        E.prepCd.textContent = '⏱ Prep ends in: ' + payload.secondsRemaining + 's';
+        if (state.role === 'attacker') renderWarPanel();
+        renderSidebar();
+      });
+
+      state.socket.on('statusChanged', ({ status }) => {
+        if (state.currentRoom) state.currentRoom.status = status;
+        renderSidebar();
+        if (status === 'lobby') {
+          E.warCdBar.style.display = 'none';
+          if (state.warCdTimer) { clearInterval(state.warCdTimer); state.warCdTimer = null; }
         }
       });
-    }
 
-    if (els.prodMultDownBtn) {
-      els.prodMultDownBtn.addEventListener('click', function () {
-        adjustProductionMult(-0.1);
+      state.socket.on('war:estimates', payload => {
+        state.warEstimates = payload;
+        renderSidebar();
+        if (state.role === 'attacker') renderWarPanel();
       });
-    }
-    if (els.prodMultUpBtn) {
-      els.prodMultUpBtn.addEventListener('click', function () {
-        adjustProductionMult(0.1);
+
+      state.socket.on('war:started', stats => {
+        if (state.currentRoom) {
+          state.currentRoom.warStartedAt  = Date.now();
+          state.currentRoom.warTimeSeconds = stats.warTimeSeconds;
+          state.currentRoom.warTowerStats  = stats;
+        }
+        E.warPanel.style.display = 'none';
+        startWarCountdown(Date.now(), stats.warTimeSeconds);
+        playSfx('warn');
       });
-    }
 
-    els.copyCodeBtn.addEventListener('click', async function () {
-      const code = els.roomCodeText.textContent || '';
-      if (!/^\d{6}$/.test(code)) return;
-      try {
-        await navigator.clipboard.writeText(code);
-        setStatus('Copied room code: ' + code);
-      } catch (_e) {
-        setStatus('Copy failed. Code: ' + code);
-      }
-    });
+      state.socket.on('war:ended', ({ result, warTowerStats }) => {
+        E.warCdBar.style.display = 'none';
+        if (state.warCdTimer) { clearInterval(state.warCdTimer); state.warCdTimer = null; }
+        showWarResult(result, warTowerStats);
+        playSfx(result === 'attacker_wins' ? 'success' : 'warn');
+      });
 
-    els.upgradeMenuBtn.addEventListener('click', function () {
-      upgradeMenuController.open();
-    });
+      state.socket.on('upgrade:applied', () => { playSfx('success'); refreshMenuIfOpen(); });
+      state.socket.on('bonus:applied',   () => { playSfx('success'); refreshMenuIfOpen(); });
+      state.socket.on('roomError', ({ error }) => alert('Server: ' + error));
+    },
 
-    els.upgradeModalCloseBtn.addEventListener('click', function () {
-      upgradeMenuController.close();
-    });
+    tryResume() {
+      if (state.resumeInFlight) return;
+      const sess = loadSession();
+      if (!sess) return;
+      state.resumeInFlight = true;
+      state.socket.emit('resumeRoom', { roomId: sess.roomId, playerToken: sess.playerToken }, res => {
+        state.resumeInFlight = false;
+        if (res && res.ok) {
+          state.role = res.role;
+          if (res.role === 'defender') state.armedForDefenderCreate = true;
+        } else {
+          clearSession();
+        }
+      });
+    },
 
-    els.upgradeModal.addEventListener('click', function (ev) {
-      if (ev.target === els.upgradeModal) {
-        upgradeMenuController.close();
-      }
-    });
+    createRoom() {
+      if (!state.connected) { alert('Not connected.'); return; }
+      state.socket.emit('createRoom', null, res => {
+        if (res && res.ok) {
+          state.role = 'defender';
+          saveSession({ roomId: res.roomId, playerToken: res.playerToken, role: 'defender' });
+        } else {
+          alert(res && res.error ? res.error : 'Could not create room.');
+        }
+      });
+    },
 
-    els.upgradeTerritorySelect.addEventListener('change', function () {
-      state.selectedUpgradeTerritory = els.upgradeTerritorySelect.value || '';
-      upgradeMenuController.render();
-    });
-    els.hqTerritorySelect.addEventListener('change', function () {
-      upgradeMenuController.render();
-    });
-    els.setHqBtn.addEventListener('click', function () {
-      upgradeMenuController.setHqTerritory();
-    });
+    joinRoom(code) {
+      if (!state.connected || !/^\d{6}$/.test(code)) { alert('Enter a valid 6-digit room code.'); return; }
+      state.socket.emit('joinRoom', { roomId: code }, res => {
+        if (res && res.ok) {
+          state.role = 'attacker';
+          saveSession({ roomId: res.roomId, playerToken: res.playerToken, role: 'attacker' });
+        } else {
+          alert(res && res.error ? res.error : 'Could not join.');
+        }
+      });
+    },
 
-    els.upgradeDamageBtn.addEventListener('click', function () {
-      upgradeMenuController.apply('damage');
-    });
-    els.upgradeAttackSpeedBtn.addEventListener('click', function () {
-      upgradeMenuController.apply('attackSpeed');
-    });
-    els.upgradeHealthBtn.addEventListener('click', function () {
-      upgradeMenuController.apply('health');
-    });
-    els.upgradeDefenseBtn.addEventListener('click', function () {
-      upgradeMenuController.apply('defense');
-    });
-    els.upgradeStorageBtn.addEventListener('click', function () {
-      upgradeMenuController.apply('storage');
-    });
-    els.upgradeSfxToggleBtn.addEventListener('click', function () {
-      setSfxEnabled(!state.sfxEnabled);
-    });
+    syncSelection() {
+      const room = state.currentRoom;
+      if (!room || room.status !== 'lobby' || state.role !== 'defender') return;
+      state.socket.emit('updateSelection', { selectedTerritories: Array.from(state.selectedSet) }, () => {});
+    },
+
+    setReady(ready) {
+      if (!state.socket || !state.currentRoom) return;
+      state.socket.emit('setReady', { ready }, res => { if (res && !res.ok) alert(res.error); });
+    },
+
+    applyUpgrade(terrName, category) {
+      if (!state.socket) return;
+      state.socket.emit('upgrade:apply', { territoryName: terrName, category }, res => {
+        if (res && !res.ok) alert(res.error || 'Upgrade failed.');
+      });
+    },
+
+    applyBonus(terrName, bonusKey) {
+      if (!state.socket) return;
+      state.socket.emit('bonus:apply', { territoryName: terrName, bonusKey }, res => {
+        if (res && !res.ok) alert(res.error || 'Bonus failed.');
+      });
+    },
+
+    setHqTerritory(terrName) {
+      if (!state.socket) return;
+      state.socket.emit('setHqTerritory', { territoryName: terrName }, res => {
+        if (res && !res.ok) alert(res.error);
+      });
+    },
+
+    setRouteMode(terrName, routeMode) {
+      if (!state.socket) return;
+      state.socket.emit('setTerritoryRouteMode', { territoryName: terrName, routeMode }, () => {});
+    },
+
+    setTaxRate(terrName, enemy, ally) {
+      if (!state.socket) return;
+      state.socket.emit('setTaxRate', { territoryName: terrName, enemy, ally }, res => {
+        if (res && res.ok) playSfx('success');
+        else if (res && res.error) alert(res.error);
+      });
+    },
+
+    selectWarType(warType) {
+      if (!state.socket) return;
+      state.socket.emit('attacker:selectWarType', { warType }, res => {
+        if (res && res.ok) {
+          state.warEstimates = { towerStats: state.warEstimates && state.warEstimates.towerStats, estimates: res.estimates };
+        }
+      });
+    },
+
+    requestWarEstimates() {
+      if (!state.socket) return;
+      state.socket.emit('war:getEstimates', null, res => {
+        if (res && res.ok) { state.warEstimates = res; if (state.role === 'attacker') renderWarPanel(); }
+      });
+    },
+  };
+
+  // ─── Helpers ──────────────────────────────────────────────────────────────────
+  function inferRole(room) {
+    if (!state.socket || !state.socket.id) return state.role;
+    if (room.defenderSocketId === state.socket.id) return 'defender';
+    if (room.attackerSocketId === state.socket.id) return 'attacker';
+    return state.role;
   }
 
-  async function init() {
-    try {
-      const saved = localStorage.getItem('warSfxEnabled');
-      if (saved === '0') setSfxEnabled(false);
-      else setSfxEnabled(true);
-    } catch (_e) {
-      setSfxEnabled(true);
-    }
-    bindUi();
-    socketController.init();
-    try {
-      await initMap();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Failed to initialize war map';
-      setStatus(msg);
-    }
-  }
+  // ─── Event Listeners ──────────────────────────────────────────────────────────
+  E.createBtn.addEventListener('click', () => socketCtrl.createRoom());
+  E.joinBtn.addEventListener('click', () => socketCtrl.joinRoom((E.joinInput.value || '').trim()));
+  E.joinInput.addEventListener('keydown', e => { if (e.key === 'Enter') socketCtrl.joinRoom((E.joinInput.value || '').trim()); });
 
-  init();
+  E.copyCode.addEventListener('click', () => {
+    const code = state.currentRoom && state.currentRoom.id;
+    if (code) navigator.clipboard.writeText(code).catch(() => {});
+  });
+
+  E.readyBtn.addEventListener('click', () => {
+    const room = state.currentRoom;
+    if (!room) return;
+    const myReady = state.role === 'defender' ? room.defenderReady : room.attackerReady;
+    socketCtrl.setReady(!myReady);
+  });
+
+  E.sfxBtn.addEventListener('click', () => {
+    state.sfxEnabled = !state.sfxEnabled;
+    E.sfxBtn.textContent = 'SFX: ' + (state.sfxEnabled ? 'ON' : 'OFF');
+  });
+
+  E.openManageBtn.addEventListener('click', () => {
+    const room = state.currentRoom;
+    const selected = room && room.selectedTerritories;
+    if (selected && selected.length) openMenu(state.activeMenu || selected[0]);
+  });
+
+  // Menu tabs
+  document.querySelectorAll('.tmenu-tab').forEach(tab => {
+    tab.addEventListener('click', function () {
+      document.querySelectorAll('.tmenu-tab').forEach(t => t.classList.remove('active'));
+      this.classList.add('active');
+      state.activeTab = this.dataset.tab;
+      renderMenuContent();
+    });
+  });
+  E.tMenuSelect.addEventListener('change', function () {
+    state.activeMenu = this.value;
+    renderMenuContent();
+  });
+  E.tMenuCloseBtn.addEventListener('click', closeMenu);
+  E.tMenuOverlay.addEventListener('click', e => { if (e.target === E.tMenuOverlay) closeMenu(); });
+
+  // War result
+  E.warResultClose.addEventListener('click', () => { E.warResultOver.style.display = 'none'; });
+
+  // ─── Boot ────────────────────────────────────────────────────────────────────
+  initMap()
+    .then(() => socketCtrl.connect())
+    .catch(e => console.error('Boot failed', e));
 })();
