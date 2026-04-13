@@ -179,27 +179,40 @@
   }
 
   // ─── Map Coordinates ─────────────────────────────────────────────────────────
-  function worldToLayer(x, z) {
-    const { imgW, imgH } = state.geo;
-    let nx = x < 0
-      ? 0.5 - 0.5 * (Math.abs(x) / Math.abs(MAP_X_MIN))
-      : 0.5 + 0.5 * (Math.abs(x) / Math.abs(MAP_X_MAX));
-    let ny = z <= 0
-      ? 1 - (Math.abs(z) / Math.abs(MAP_Z_MIN))
-      : 1 + (Math.abs(z) / Math.abs(MAP_Z_MAX));
+  // World coordinate bounds (matches territories-map.js constants exactly)
+  const xMin = MAP_X_MIN, xMax = MAP_X_MAX;
+  const zMin = MAP_Z_MIN, zMax = MAP_Z_MAX;
+
+  function worldToLayer(x, z, imgW, imgH) {
+    const westSpan  = Math.abs(xMin) || 1;
+    const eastSpan  = Math.abs(xMax) || 1;
+    const northSpan = Math.abs(zMin) || 1;
+    const southSpan = Math.abs(zMax) || 1;
+    let nx = x < 0 ? 0.5 - 0.5 * (Math.abs(x) / westSpan) : 0.5 + 0.5 * (Math.abs(x) / eastSpan);
+    let ny = z <= 0 ? 1 - (Math.abs(z) / northSpan) : 1 + (Math.abs(z) / southSpan);
     nx = clamp01(nx); ny = clamp01(ny);
     if (FLIP_Z) ny = 1 - ny;
     const snx = 0.5 + (nx - 0.5) * MAP_SCALE_X;
     const sny = 0.5 + (ny - 0.5) * MAP_SCALE_Y;
-    return L.latLng(
-      sny * (imgH * MAP_BG_SCALE_Y) + MAP_OFFSET_Y_PX,
-      snx * (imgW * MAP_BG_SCALE_X) + MAP_OFFSET_X_PX
-    );
+    // Territory rectangles are placed in FULL imgW/imgH space.
+    // MAP_BG_SCALE_X/Y only shrink the image overlay bounds, not territory coords.
+    return L.latLng(sny * imgH + MAP_OFFSET_Y_PX, snx * imgW + MAP_OFFSET_X_PX);
   }
-  function boundsFromWorldRect(t) {
+
+  /** Returns the Leaflet bounds for the image overlay (shrunk by BG_SCALE, centered). */
+  function getImageOverlayBounds(imgW, imgH) {
+    const scaledW = imgW * MAP_BG_SCALE_X;
+    const scaledH = imgH * MAP_BG_SCALE_Y;
+    const minLng  = (imgW - scaledW) / 2;
+    const maxLng  = minLng + scaledW;
+    const minLat  = (imgH - scaledH) / 2;
+    const maxLat  = minLat + scaledH;
+    return L.latLngBounds([[minLat, minLng], [maxLat, maxLng]]);
+  }
+  function boundsFromWorldRect(t, imgW, imgH) {
     const corners = [
-      worldToLayer(t.minX, t.minZ), worldToLayer(t.maxX, t.minZ),
-      worldToLayer(t.maxX, t.maxZ), worldToLayer(t.minX, t.maxZ),
+      worldToLayer(t.minX, t.minZ, imgW, imgH), worldToLayer(t.maxX, t.minZ, imgW, imgH),
+      worldToLayer(t.maxX, t.maxZ, imgW, imgH), worldToLayer(t.minX, t.maxZ, imgW, imgH),
     ];
     let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
     corners.forEach(c => {
@@ -208,11 +221,14 @@
     });
     return L.latLngBounds([[minLat, minLng], [maxLat, maxLng]]);
   }
-  function territoryCenterLatLng(name) {
+  function territoryCenterLatLng(name, imgW, imgH) {
     const t = state.territoryByName.get(name);
     if (!t) return null;
-    return worldToLayer((t.minX + t.maxX) / 2, (t.minZ + t.maxZ) / 2);
+    return worldToLayer((t.minX + t.maxX) / 2, (t.minZ + t.maxZ) / 2, imgW, imgH);
   }
+  // Convenience wrappers that read imgW/imgH from state
+  function boundsFromWorldRectS(t) { const g = state.geo; return boundsFromWorldRect(t, g.imgW, g.imgH); }
+  function territoryCenterS(name)  { const g = state.geo; return territoryCenterLatLng(name, g.imgW, g.imgH); }
 
   // ─── HQ Capacity ─────────────────────────────────────────────────────────────
   function hqCap(storLevel, resKey) {
@@ -314,7 +330,7 @@
         const key = name < other ? name + '|' + other : other + '|' + name;
         if (drawn.has(key)) return;
         drawn.add(key);
-        const s = territoryCenterLatLng(name), e = territoryCenterLatLng(other);
+        const s = territoryCenterS(name), e = territoryCenterS(other);
         if (!s || !e) return;
         const onPath = pathEdges.has(key);
         L.polyline([s, e], {
@@ -326,7 +342,7 @@
       });
     });
     // Crown on HQ
-    const ctr = territoryCenterLatLng(hq);
+    const ctr = territoryCenterS(hq);
     if (ctr) {
       const icon = L.divIcon({ className: '', html: '<div style="font-size:18px;text-shadow:0 1px 4px #000;line-height:1;">&#x1F451;</div>', iconSize: [20, 20], iconAnchor: [10, 10] });
       state.hqMarker = L.marker(ctr, { icon, interactive: false }).addTo(state.map);
@@ -364,10 +380,10 @@
     const tr = row['Trading Routes'] || row.tradingRoutes || row.trade_routes;
     return Array.isArray(tr) ? tr.map(String) : [];
   }
-  function initMapLayers(territories) {
+  function initMapLayers(territories, imgW, imgH) {
     territories.forEach(t => {
       state.territoryByName.set(t.name, t);
-      const layer = L.rectangle(boundsFromWorldRect(t), styleFor(t.name));
+      const layer = L.rectangle(boundsFromWorldRect(t, imgW, imgH), styleFor(t.name));
       layer.on('click', () => onTerritoryClick(t.name));
       layer.bindTooltip(t.name, { sticky: true, direction: 'auto', className: 'terr-tooltip' });
       layer.addTo(state.map);
@@ -383,13 +399,17 @@
     const imgH = img.naturalHeight || 1024;
     state.geo = { imgW, imgH };
 
+    // Leaflet coordinate space spans the FULL image dimensions
+    const fullBounds    = L.latLngBounds([[0, 0], [imgH, imgW]]);
+    // Image overlay is placed at the BG-scaled sub-bounds (matches live map)
+    const overlayBounds = getImageOverlayBounds(imgW, imgH);
+
     state.map = L.map(document.getElementById('map'), {
-      crs: L.CRS.Simple, minZoom: -4, maxZoom: 2,
-      zoomControl: true, attributionControl: false
+      crs: L.CRS.Simple, minZoom: -4, maxZoom: 4,
+      zoomSnap: 0.25, zoomControl: true, attributionControl: false
     });
-    const bounds = L.latLngBounds([[0, 0], [imgH, imgW]]);
-    L.imageOverlay(MAP_IMAGE_URL, bounds).addTo(state.map);
-    state.map.fitBounds(bounds);
+    L.imageOverlay(MAP_IMAGE_URL, overlayBounds).addTo(state.map);
+    state.map.fitBounds(fullBounds);
     state.routeLayer = L.layerGroup().addTo(state.map);
 
     try {
@@ -414,7 +434,7 @@
           }
         });
       });
-      initMapLayers(territories);
+      initMapLayers(territories, imgW, imgH);
     } catch (e) { console.error('Territory data load failed', e); }
   }
 
