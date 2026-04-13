@@ -308,19 +308,7 @@
     const hq = room ? (room.hqTerritory || selected[0]) : selected[0];
     if (!selected.length || !hq) return;
     const selectedSet = new Set(selected);
-    const adj = buildAdjacency(selected);
-
-    // Solid yellow  → on the active routing path to HQ
-    // Dotted blue   → trade link exists but not on active path (info / backup route)
-    const pathEdges = new Set();
-    selected.forEach(name => {
-      const path = bfsHq(name, hq, adj);
-      if (!path || path.length < 2) return;
-      for (let i = 0; i < path.length - 1; i++) {
-        const a = path[i], b = path[i + 1];
-        if (selectedSet.has(a) && selectedSet.has(b)) pathEdges.add(a < b ? a + '|' + b : b + '|' + a);
-      }
-    });
+    // All trade connections between selected territories — uniform solid lines
     const drawn = new Set();
     selected.forEach(name => {
       const t = state.territoryByName.get(name);
@@ -332,13 +320,7 @@
         drawn.add(key);
         const s = territoryCenterS(name), e = territoryCenterS(other);
         if (!s || !e) return;
-        const onPath = pathEdges.has(key);
-        L.polyline([s, e], {
-          color:     onPath ? '#ffe08a' : '#8ec5ff',
-          weight:    onPath ? 3 : 1.5,
-          opacity:   onPath ? 0.95 : 0.30,
-          dashArray: onPath ? null : '4 7'
-        }).addTo(state.routeLayer);
+        L.polyline([s, e], { color: '#ffe08a', weight: 2, opacity: 0.85 }).addTo(state.routeLayer);
       });
     });
     // Crown on HQ
