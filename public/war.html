@@ -330,6 +330,13 @@
       <div id="clickHint" style="font-size:10px; color:#666; margin-top:4px;"></div>
       <button id="openManageBtn" class="tb-btn" style="width:100%;margin-top:6px;display:none;">📋 Manage Territory</button>
     </div>
+
+    <!-- War Team Selector (attacker sidebar — shown during prep & playing) -->
+    <div class="sb-section" id="warTeamPanel" style="display:none;">
+      <div class="sb-label">⚔ Choose War Team</div>
+      <div id="warTypeCards"></div>
+      <div id="attackStatusBar" style="display:none;margin-top:6px;"></div>
+    </div>
   </div>
 
   <!-- Territory Menu Modal -->
@@ -351,16 +358,24 @@
     </div>
   </div>
 
-  <!-- Attacker War Panel -->
-  <div id="warPanel">
-    <div class="war-panel-hdr">
-      <div class="war-panel-title">⚔ CHOOSE ATTACK</div>
+  <!-- Old war panel removed — war team is now in sidebar -->
+
+  <!-- Attack Panel Overlay -->
+  <div id="attackOverlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);display:none;align-items:center;justify-content:center;z-index:1100;">
+    <div style="width:min(420px,94vw);">
+      <div class="mc-panel" style="padding:16px;">
+        <div id="attackPanelBody"></div>
+        <div style="margin-top:10px;text-align:right;">
+          <button id="attackCloseBtn" class="mc-btn" style="font-size:16px;">✕ Close</button>
+        </div>
+      </div>
     </div>
-    <div id="warTypeCards"></div>
   </div>
 
-  <!-- War Countdown -->
-  <div id="warCountdownBar">⚔ War ends in: <span id="warCountdownText">—</span></div>
+  <!-- Attack + Queue countdown (top center, replaces war countdown) -->
+  <div id="warCountdownBar" style="position:fixed;top:56px;left:50%;transform:translateX(-50%);font-family:'VT323',monospace;font-size:22px;color:#ff6666;background:rgba(20,5,5,0.95);border:2px solid #cc2222;padding:4px 18px;display:none;z-index:900;">
+    ⚔ <span id="warCountdownText">—</span>
+  </div>
 
   <!-- War Result Overlay -->
   <div id="warResultOverlay">

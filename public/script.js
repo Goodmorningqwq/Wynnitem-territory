@@ -12,13 +12,12 @@
   const MAP_OFFSET_X_PX = 75, MAP_OFFSET_Y_PX = -15;
   const MAP_SCALE_X    = 1.000;
   const MAP_SCALE_Y    = 1.000;
-  const MAP_BG_SCALE_X = 0.803;   // map content covers 80.3% of image width
-  const MAP_BG_SCALE_Y = 0.966;   // map content covers 96.6% of image height
+  const MAP_BG_SCALE_X = 0.803;
+  const MAP_BG_SCALE_Y = 0.966;
   const FLIP_Z = true;
   const SOCKET_DEV_PORT = 3001;
   const SESSION_KEY_PREFIX = 'ecoWarRoomSessionV2';
 
-  // Real Wynncraft upgrade costs (identical for all 4 stat types)
   const UPGRADE_COSTS_PER_LEVEL = [0, 100, 300, 600, 1200, 2400, 4800, 8400, 12000, 15600, 19200, 22800];
   const UPGRADE_RESOURCE = { damage: 'ore', attackSpeed: 'crops', health: 'wood', defense: 'fish', storage: 'wood' };
   const UPGRADE_ICON     = { damage: '⚔', attackSpeed: '⚡', health: '❤', defense: '🛡', storage: '📦' };
@@ -34,9 +33,9 @@
   };
 
   const WAR_TYPES = {
-    solo:   { label: 'Solo Warrer',      dps: 150000,   icon: '⚔',     color: '#ffcc44' },
-    normal: { label: 'Normal War Team',  dps: 2000000,  icon: '⚔⚔',   color: '#ff8844' },
-    elite:  { label: 'Elite War Team',   dps: 4000000,  icon: '⚔⚔⚔',  color: '#ff4444' }
+    solo:   { label: 'Solo Warrer',      dps: 150000,   icon: '⚔',    color: '#ffcc44' },
+    normal: { label: 'Normal War Team',  dps: 2000000,  icon: '⚔⚔',  color: '#ff8844' },
+    elite:  { label: 'Elite War Team',   dps: 4000000,  icon: '⚔⚔⚔', color: '#ff4444' }
   };
 
   const HQ_BASE_STORE  = { emeralds: 5000,   resource: 1500   };
@@ -58,11 +57,12 @@
     socketBase: '',
     resumeInFlight: false,
     tickCdTimer: null,
-    warCdTimer: null,
-    activeMenu: null,   // territory name currently open
+    attackCdTimer: null,
+    activeMenu: null,
     activeTab: 'upgrades',
     warEstimates: null,
     selectedWarType: 'normal',
+    attackPanelTerritory: null,
   };
 
   // ─── Element refs ────────────────────────────────────────────────────────────
@@ -100,18 +100,21 @@
     terrList:       $('territoryList'),
     clickHint:      $('clickHint'),
     openManageBtn:  $('openManageBtn'),
-    // Menu
+    // Territory menu modal
     tMenuOverlay:   $('tMenuOverlay'),
-    tMenuBox:       $('tMenuBox'),
     tMenuTitle:     $('tMenuTitle'),
     tMenuSelect:    $('tMenuSelect'),
     tMenuCloseBtn:  $('tMenuCloseBtn'),
     tMenuBody:      $('tMenuBody'),
-    // War
-    warPanel:       $('warPanel'),
+    // War team sidebar panel (attacker)
+    warTeamPanel:   $('warTeamPanel'),
     warTypeCards:   $('warTypeCards'),
-    warCdBar:       $('warCountdownBar'),
-    warCdText:      $('warCountdownText'),
+    attackStatusBar:$('attackStatusBar'),
+    // Attack panel overlay
+    attackOverlay:  $('attackOverlay'),
+    attackPanelBody:$('attackPanelBody'),
+    attackCloseBtn: $('attackCloseBtn'),
+    // War result
     warResultOver:  $('warResultOverlay'),
     warResultHdr:   $('warResultHdr'),
     warResultStats: $('warResultStats'),
@@ -120,7 +123,7 @@
 
   // ─── Utilities ───────────────────────────────────────────────────────────────
   const fmt = v => (Number(v) || 0).toLocaleString();
-  const fmtTime = s => (Math.floor(s / 60)) + 'm ' + String(Math.max(0, s % 60)).padStart(2, '0') + 's';
+  const fmtTime = s => Math.floor(Math.max(0,s) / 60) + 'm ' + String(Math.max(0,s) % 60).padStart(2, '0') + 's';
   const clamp   = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const clamp01 = v => clamp(v, 0, 1);
 
@@ -151,7 +154,7 @@
       const raw = sessionStorage.getItem(sessionKey());
       if (!raw) return null;
       const p = JSON.parse(raw);
-      if (!p || !/^\d{6}$/.test(p.roomId || '') || !p.playerToken || (p.role !== 'defender' && p.role !== 'attacker')) return null;
+      if (!p || !/^\d{6}$/.test(p.roomId || '') || !p.playerToken) return null;
       return p;
     } catch(_) { return null; }
   }
@@ -175,10 +178,9 @@
     return '';
   }
 
-  // ─── Map Coordinate Helpers ──────────────────────────────────────────────────
+  // ─── Map Coordinates ─────────────────────────────────────────────────────────
   function worldToLayer(x, z) {
     const { imgW, imgH } = state.geo;
-    // Normalise world coords to 0–1
     let nx = x < 0
       ? 0.5 - 0.5 * (Math.abs(x) / Math.abs(MAP_X_MIN))
       : 0.5 + 0.5 * (Math.abs(x) / Math.abs(MAP_X_MAX));
@@ -187,8 +189,6 @@
       : 1 + (Math.abs(z) / Math.abs(MAP_Z_MAX));
     nx = clamp01(nx); ny = clamp01(ny);
     if (FLIP_Z) ny = 1 - ny;
-    // Apply per-axis scale then map to the portion of the image that
-    // actually contains the Wynncraft map (BG_SCALE factors)
     const snx = 0.5 + (nx - 0.5) * MAP_SCALE_X;
     const sny = 0.5 + (ny - 0.5) * MAP_SCALE_Y;
     return L.latLng(
@@ -225,8 +225,21 @@
   function styleFor(name) {
     const room = state.currentRoom;
     const hq   = room && room.hqTerritory ? room.hqTerritory : '';
-    const sel  = state.selectedSet.has(name) || (room && (room.selectedTerritories || []).includes(name));
+    const defSel  = room ? (room.selectedTerritories || []) : Array.from(state.selectedSet);
+    const capSet  = new Set(room ? (room.attackerCapturedTerritories || []) : []);
+    const inAttack = room && room.currentAttack && room.currentAttack.territory === name;
+    const sel  = state.selectedSet.has(name) || defSel.includes(name);
     const isHq = !!hq && name === hq;
+
+    // Attacker captured → red
+    if (capSet.has(name)) return { color: '#ff4444', weight: 2, fillColor: '#aa0000', fillOpacity: 0.55, opacity: 1 };
+    // Active battle → orange flash
+    if (inAttack && room.currentAttack.phase === 'battle')
+      return { color: '#ff8800', weight: 3, fillColor: '#ff5500', fillOpacity: 0.60, opacity: 1 };
+    // Queue phase → yellow
+    if (inAttack)
+      return { color: '#ffee00', weight: 3, fillColor: '#ffe000', fillOpacity: 0.45, opacity: 1 };
+    // Normal defender territory
     if (sel && isHq) return { color: '#facc15', weight: 3, fillColor: '#3b82f6', fillOpacity: 0.55, opacity: 1 };
     if (sel)         return { color: '#4da3ff', weight: 2, fillColor: '#3b82f6', fillOpacity: 0.45, opacity: 1 };
     if (isHq)        return { color: '#facc15', weight: 2, fillColor: '#fde68a', fillOpacity: 0.3,  opacity: 0.9 };
@@ -245,8 +258,7 @@
       if (!t || !t.tradeRoutes) return;
       t.tradeRoutes.forEach(to => {
         if (!set.has(to)) return;
-        adj.get(from).add(to);
-        adj.get(to).add(from);
+        adj.get(from).add(to); adj.get(to).add(from);
       });
     });
     return adj;
@@ -270,6 +282,7 @@
     }
     return null;
   }
+
   function renderRoutes() {
     if (!state.routeLayer) return;
     state.routeLayer.clearLayers();
@@ -280,7 +293,9 @@
     if (!selected.length || !hq) return;
     const selectedSet = new Set(selected);
     const adj = buildAdjacency(selected);
-    // Compute path edges
+
+    // Solid yellow  → on the active routing path to HQ
+    // Dotted blue   → trade link exists but not on active path (info / backup route)
     const pathEdges = new Set();
     selected.forEach(name => {
       const path = bfsHq(name, hq, adj);
@@ -290,7 +305,6 @@
         if (selectedSet.has(a) && selectedSet.has(b)) pathEdges.add(a < b ? a + '|' + b : b + '|' + a);
       }
     });
-    // Draw edges
     const drawn = new Set();
     selected.forEach(name => {
       const t = state.territoryByName.get(name);
@@ -304,17 +318,17 @@
         if (!s || !e) return;
         const onPath = pathEdges.has(key);
         L.polyline([s, e], {
-          color: onPath ? '#ffe08a' : '#8ec5ff',
-          weight: onPath ? 3 : 2,
-          opacity: onPath ? 0.95 : 0.5,
-          dashArray: onPath ? null : '5 5'
+          color:     onPath ? '#ffe08a' : '#8ec5ff',
+          weight:    onPath ? 3 : 1.5,
+          opacity:   onPath ? 0.95 : 0.30,
+          dashArray: onPath ? null : '4 7'
         }).addTo(state.routeLayer);
       });
     });
-    // HQ crown marker
+    // Crown on HQ
     const ctr = territoryCenterLatLng(hq);
     if (ctr) {
-      const icon = L.divIcon({ className: '', html: '<div style="font-size:18px;text-shadow:0 1px 4px #000;line-height:1;">👑</div>', iconSize: [20, 20], iconAnchor: [10, 10] });
+      const icon = L.divIcon({ className: '', html: '<div style="font-size:18px;text-shadow:0 1px 4px #000;line-height:1;">&#x1F451;</div>', iconSize: [20, 20], iconAnchor: [10, 10] });
       state.hqMarker = L.marker(ctr, { icon, interactive: false }).addTo(state.map);
     }
   }
@@ -323,28 +337,33 @@
   function onTerritoryClick(name) {
     const room = state.currentRoom;
     const status = room ? room.status : 'lobby';
-    if (status === 'prep' || status === 'playing') {
+
+    if (status === 'playing') {
+      if (state.role === 'attacker') {
+        // Attacker: clicking a defender territory → attack panel
+        const defTerr = room.selectedTerritories || [];
+        if (defTerr.includes(name)) { showAttackPanel(name); return; }
+        // Clicking own captured territory or neutral → ignore
+        return;
+      }
+      // Defender → territory menu
       openMenu(name); return;
     }
-    // Lobby — toggle for defender
-    if (state.role === 'attacker') { openMenu(name); return; }
-    if (state.selectedSet.has(name)) {
-      state.selectedSet.delete(name);
-    } else {
-      state.selectedSet.add(name);
-    }
-    updateAllStyles();
-    renderRoutes();
-    renderSidebar();
+    if (status === 'prep') { openMenu(name); return; }
+
+    // Lobby: toggle selection (defender only)
+    if (state.role === 'attacker') return;
+    if (state.selectedSet.has(name)) state.selectedSet.delete(name);
+    else state.selectedSet.add(name);
+    updateAllStyles(); renderRoutes(); renderSidebar();
     socketCtrl.syncSelection();
   }
 
-  // ─── Map Initialisation ───────────────────────────────────────────────────────
+  // ─── Map Init ─────────────────────────────────────────────────────────────────
   function readTradeRoutes(row) {
     const tr = row['Trading Routes'] || row.tradingRoutes || row.trade_routes;
     return Array.isArray(tr) ? tr.map(String) : [];
   }
-
   function initMapLayers(territories) {
     territories.forEach(t => {
       state.territoryByName.set(t.name, t);
@@ -383,10 +402,8 @@
         if (!loc || !loc.start || !loc.end) return;
         territories.push({
           name,
-          minX: Math.min(loc.start[0], loc.end[0]),
-          maxX: Math.max(loc.start[0], loc.end[0]),
-          minZ: Math.min(loc.start[1], loc.end[1]),
-          maxZ: Math.max(loc.start[1], loc.end[1]),
+          minX: Math.min(loc.start[0], loc.end[0]), maxX: Math.max(loc.start[0], loc.end[0]),
+          minZ: Math.min(loc.start[1], loc.end[1]), maxZ: Math.max(loc.start[1], loc.end[1]),
           tradeRoutes: readTradeRoutes(row),
           resources: {
             emeralds: parseInt((row.resources || {}).emeralds || 0, 10) || 0,
@@ -398,9 +415,7 @@
         });
       });
       initMapLayers(territories);
-    } catch (e) {
-      console.error('Territory data load failed', e);
-    }
+    } catch (e) { console.error('Territory data load failed', e); }
   }
 
   // ─── Sidebar ──────────────────────────────────────────────────────────────────
@@ -417,14 +432,12 @@
     E.statusBadge.className = 'status-badge' + (status === 'prep' ? ' prep' : status === 'playing' ? ' playing' : '');
 
     // Prep countdown
-    if (status === 'prep' && typeof room.prepSecondsRemaining === 'number' && room.prepSecondsRemaining !== null) {
+    if (status === 'prep' && typeof room.prepSecondsRemaining === 'number') {
       E.prepCd.style.display = 'block';
       E.prepCd.textContent = '⏱ Prep ends in: ' + room.prepSecondsRemaining + 's';
-    } else {
-      E.prepCd.style.display = 'none';
-    }
+    } else { E.prepCd.style.display = 'none'; }
 
-    // Ready section
+    // Ready (lobby only)
     E.readySection.style.display = status === 'lobby' ? 'block' : 'none';
     E.readyStateText.textContent = 'Defender: ' + (room.defenderReady ? '✅' : '❌') + '  |  Attacker: ' + (room.attackerReady ? '✅' : '❌');
     const canReady = status === 'lobby' && !!state.role && !!room.defenderSocketId && !!room.attackerSocketId;
@@ -432,12 +445,12 @@
     const myReady = state.role === 'defender' ? room.defenderReady : room.attackerReady;
     E.readyBtn.textContent = myReady ? '✅ UNREADY' : 'READY';
 
-    // Resources panel
-    const showRes = status === 'prep' || status === 'playing';
+    // Resources panel (defender only during prep/playing)
+    const showRes = (status === 'prep' || status === 'playing') && state.role === 'defender';
     E.resPanel.style.display = showRes ? 'block' : 'none';
 
-    // Tower stats (attacker view)
-    const showTower = showRes && state.role === 'attacker';
+    // Tower stats (attacker during prep only, shows HQ estimates)
+    const showTower = status === 'prep' && state.role === 'attacker';
     E.towerPanel.style.display = showTower ? 'block' : 'none';
     if (showTower && state.warEstimates && state.warEstimates.towerStats) {
       const ts = state.warEstimates.towerStats;
@@ -448,104 +461,194 @@
       E.towerDLv.textContent  = ts.defenseLevel;
     }
 
+    // War team selector (attacker: always show when no active attack in progress)
+    const showWarTeam = state.role === 'attacker' && !room.currentAttack;
+    if (E.warTeamPanel) E.warTeamPanel.style.display = (showWarTeam && status !== 'lobby') ? 'block' : 'none';
+    if (showWarTeam && status !== 'lobby') renderWarTypeSelector();
+
     // Territory list
     const selected = room.selectedTerritories || Array.from(state.selectedSet);
-    E.selCount.textContent = selected.length;
+    const captured = room.attackerCapturedTerritories || [];
+    E.selCount.textContent = selected.length + (captured.length ? ' (-' + captured.length + ' taken)' : '');
     E.terrList.innerHTML = selected.slice(0, 50).map(name => {
       const isHq = name === room.hqTerritory;
-      const upgrades = room.territoryUpgrades && room.territoryUpgrades[name];
-      let badge = '';
-      if (upgrades) {
-        const parts = [];
-        if (upgrades.damage)      parts.push('D' + upgrades.damage);
-        if (upgrades.attackSpeed) parts.push('A' + upgrades.attackSpeed);
-        if (upgrades.health)      parts.push('H' + upgrades.health);
-        if (upgrades.defense)     parts.push('DEF' + upgrades.defense);
-        if (parts.length) badge = `<span class="terr-badge">${parts.join(' ')}</span>`;
+      const upg = room.territoryUpgrades && room.territoryUpgrades[name];
+      const parts = [];
+      if (upg) {
+        if (upg.damage) parts.push('D' + upg.damage);
+        if (upg.attackSpeed) parts.push('A' + upg.attackSpeed);
+        if (upg.health) parts.push('H' + upg.health);
+        if (upg.defense) parts.push('DEF' + upg.defense);
       }
-      return `<div class="terr-item">${isHq ? '👑 ' : ''}<span style="flex:1;">${name}</span>${badge}</div>`;
+      const badge = parts.length ? `<span class="terr-badge">${parts.join(' ')}</span>` : '';
+      const atk = room.currentAttack && room.currentAttack.territory === name;
+      const atkStyle = atk ? `color:${room.currentAttack.phase === 'battle' ? '#ff8844' : '#ffe066'};` : '';
+      return `<div class="terr-item" style="${atkStyle}">${isHq ? '👑 ' : ''}${atk ? (room.currentAttack.phase === 'battle' ? '⚔ ' : '⏳ ') : ''}<span style="flex:1;">${name}</span>${badge}</div>`;
     }).join('');
+    if (captured.length) {
+      E.terrList.innerHTML += captured.map(n =>
+        `<div class="terr-item" style="color:#ff6660;"><span style="font-size:10px;">☠</span> <span style="flex:1;text-decoration:line-through;">${n}</span></div>`
+      ).join('');
+    }
 
-    // Click hint
+    // Click hints
     if (status === 'lobby' && state.role === 'defender') {
       E.clickHint.textContent = 'Click territories to select/deselect';
+    } else if (status === 'playing' && state.role === 'attacker') {
+      E.clickHint.textContent = room.currentAttack ? '⚔ Attack in progress...' : '🗡 Click a defender territory to attack!';
     } else if (status === 'prep' || status === 'playing') {
       E.clickHint.textContent = 'Click territory on map to manage';
-    } else {
-      E.clickHint.textContent = '';
-    }
+    } else { E.clickHint.textContent = ''; }
+
     E.openManageBtn.style.display = (showRes && selected.length) ? 'block' : 'none';
 
-    // Attacker war panel
-    const showWarPanel = status === 'prep' && state.role === 'attacker';
-    E.warPanel.style.display = showWarPanel ? 'flex' : 'none';
-    if (showWarPanel) renderWarPanel();
-
-    // War countdown
-    if (status === 'playing' && room.warStartedAt && room.warTimeSeconds) {
-      startWarCountdown(room.warStartedAt, room.warTimeSeconds);
-    }
+    // Attack status bar
+    renderAttackStatus();
   }
 
-  // ─── War Panel ───────────────────────────────────────────────────────────────
-  function renderWarPanel() {
-    const estimates = state.warEstimates && state.warEstimates.estimates;
+  // ─── War Team Selector (attacker sidebar) ────────────────────────────────────
+  function renderWarTypeSelector() {
+    if (!E.warTypeCards) return;
     let html = '';
     Object.entries(WAR_TYPES).forEach(([type, def]) => {
-      const est = estimates && estimates[type];
-      const secs = est ? est.warTimeSeconds : null;
-      const timeStr = secs != null ? fmtTime(secs) : '—';
-      const tcls = secs == null ? '' : secs < 60 ? 'fast' : secs < 300 ? 'mid' : 'slow';
       const sel = state.selectedWarType === type;
-      html += `<div class="war-type-card${sel ? ' sel' : ''}" data-type="${type}">
+      html += `<div class="war-type-card-sb${sel ? ' sel' : ''}" data-type="${type}"
+        style="cursor:pointer;padding:6px 10px;margin-bottom:4px;border:2px solid ${sel ? def.color : '#3a1a1a'};
+               background:${sel ? 'rgba(30,8,8,0.98)' : 'rgba(18,8,8,0.85)'};">
         <div style="display:flex;align-items:center;gap:6px;">
-          <span style="font-size:16px;">${def.icon}</span>
-          <span class="wt-name" style="color:${def.color};">${def.label}</span>
+          <span>${def.icon}</span>
+          <span style="font-family:VT323,monospace;font-size:16px;color:${def.color};">${def.label}</span>
         </div>
-        <div class="wt-dps">${fmt(def.dps)} DPS</div>
-        <div class="wt-time ${tcls}">⏱ ${timeStr}</div>
+        <div style="font-family:VT323,monospace;font-size:12px;color:#aa6666;">${fmt(def.dps)} DPS</div>
       </div>`;
     });
     E.warTypeCards.innerHTML = html;
-    E.warTypeCards.querySelectorAll('.war-type-card').forEach(card => {
+    E.warTypeCards.querySelectorAll('.war-type-card-sb').forEach(card => {
       card.addEventListener('click', function () {
         state.selectedWarType = this.dataset.type;
-        renderWarPanel();
         socketCtrl.selectWarType(this.dataset.type);
+        renderWarTypeSelector();
       });
     });
   }
 
-  // ─── War Countdown ────────────────────────────────────────────────────────────
-  function startWarCountdown(startedAt, totalSecs) {
-    if (state.warCdTimer) clearInterval(state.warCdTimer);
-    E.warCdBar.style.display = 'block';
-    function paint() {
-      const rem = Math.max(0, Math.ceil(totalSecs - (Date.now() - startedAt) / 1000));
-      E.warCdText.textContent = fmtTime(rem);
-      if (rem <= 0) { clearInterval(state.warCdTimer); state.warCdTimer = null; }
+  // ─── Attack Status Bar ────────────────────────────────────────────────────────
+  function renderAttackStatus() {
+    const room = state.currentRoom;
+    const atk = room && room.currentAttack;
+    if (!E.attackStatusBar) return;
+    if (!atk) {
+      E.attackStatusBar.style.display = 'none';
+      if (state.attackCdTimer) { clearInterval(state.attackCdTimer); state.attackCdTimer = null; }
+      return;
     }
-    paint();
-    state.warCdTimer = setInterval(paint, 500);
+    E.attackStatusBar.style.display = 'block';
+    const phase  = atk.phase;
+    const endsAt = phase === 'queue' ? atk.queueEndsAt : atk.battleEndsAt;
+    const rem    = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    const icon   = phase === 'queue' ? '⏳' : '⚔';
+    const label  = phase === 'queue' ? 'Queue' : 'Battle';
+    E.attackStatusBar.innerHTML = `<div style="font-family:VT323,monospace;font-size:16px;color:${phase==='battle'?'#ff8844':'#ffe066'};">${icon} ${label}: <b>${atk.territory}</b> — ${fmtTime(rem)}</div>`;
+    if (!state.attackCdTimer) {
+      state.attackCdTimer = setInterval(() => { renderAttackStatus(); updateAllStyles(); }, 500);
+    }
+  }
+
+  // ─── Attack Panel Overlay ─────────────────────────────────────────────────────
+  function showAttackPanel(name) {
+    state.attackPanelTerritory = name;
+    const room = state.currentRoom;
+    const overlay = E.attackOverlay;
+    const body    = E.attackPanelBody;
+    if (!room || !overlay || !body) return;
+
+    const captured    = room.attackerCapturedTerritories || [];
+    const capSet      = new Set(captured);
+    const defTerr     = room.selectedTerritories || [];
+    const t           = state.territoryByName.get(name);
+    const tradeRoutes = t ? t.tradeRoutes : [];
+    const hasAdjCap   = tradeRoutes.some(r => capSet.has(r));
+    const canAttack   = defTerr.includes(name) && (captured.length === 0 || hasAdjCap);
+    const attackInProgress = !!room.currentAttack;
+    const isThisAttack     = attackInProgress && room.currentAttack.territory === name;
+    const isHq     = name === room.hqTerritory;
+
+    // Estimate stats locally for display
+    const upg     = room.territoryUpgrades && room.territoryUpgrades[name] ? room.territoryUpgrades[name] : {};
+    const selSet  = new Set(defTerr);
+    const conns   = tradeRoutes.filter(r => r !== name && selSet.has(r)).length;
+    const wt      = WAR_TYPES[state.selectedWarType] || WAR_TYPES.normal;
+    const hlv     = parseInt(upg.health || 0);
+    const dlv     = parseInt(upg.defense || 0);
+    const towerHP = Math.floor(1000000 * (1 + hlv * 0.25) * (1 + 0.3 * conns));
+    const defRed  = Math.min(0.80, dlv * 0.05);
+    const ehp     = Math.floor(towerHP / (1 - defRed));
+    const battleSec = Math.ceil(ehp / wt.dps) + 30;
+    const adjCap = tradeRoutes.some(r => capSet.has(r));
+    const queueNote = adjCap ? 'hops+1 min (adjacent)' : '2 min base (no adjacent capture)';
+
+    if (isThisAttack) {
+      const phase  = room.currentAttack.phase;
+      const endsAt = phase === 'queue' ? room.currentAttack.queueEndsAt : room.currentAttack.battleEndsAt;
+      const rem    = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+      body.innerHTML = `
+        <div class="mc-title" style="margin-bottom:8px;">⚔ Attacking: ${name}${isHq?' 👑':''}</div>
+        <div style="font-family:VT323,monospace;font-size:22px;color:${phase==='battle'?'#ff8844':'#ffe066'};">
+          ${phase === 'queue' ? '⏳ Queue: ' : '⚔ Battle: '} ${fmtTime(rem)}
+        </div>
+        <div style="font-size:12px;color:#888;margin-top:6px;">Waiting for territory to fall…</div>`;
+    } else if (!defTerr.includes(name)) {
+      body.innerHTML = `<div class="mc-title">Not a defender territory</div>`;
+    } else if (!canAttack) {
+      body.innerHTML = `
+        <div class="mc-title" style="margin-bottom:8px;">${name}${isHq?' 👑':''}</div>
+        <div style="font-family:VT323,monospace;font-size:16px;color:#cc4444;">⛔ Cannot attack yet<br>
+        Capture an adjacent territory first.</div>`;
+    } else if (attackInProgress) {
+      body.innerHTML = `
+        <div class="mc-title" style="margin-bottom:8px;">${name}${isHq?' 👑':''}</div>
+        <div style="font-family:VT323,monospace;font-size:16px;color:#cc8844;">⚠ Another attack is already in progress.<br>Wait for it to finish.</div>`;
+    } else {
+      body.innerHTML = `
+        <div class="mc-title" style="margin-bottom:8px;">⚔ Attack: ${name}${isHq?' 👑':''}</div>
+        <div style="font-family:VT323,monospace;font-size:15px;color:#3d2c18;line-height:1.7;margin-bottom:10px;">
+          <div>Tower HP: <b>${fmt(towerHP)}</b> &nbsp;|&nbsp; EHP: <b>${fmt(ehp)}</b></div>
+          <div>Connections: ${conns} &nbsp;|&nbsp; Health Lv: ${hlv} &nbsp;|&nbsp; Def Lv: ${dlv}</div>
+          <div style="margin-top:4px;">War team: <b style="color:${wt.color};">${wt.icon} ${wt.label}</b> (${fmt(wt.dps)} DPS)</div>
+          <div style="color:#5a3820;">⏳ Queue: ~${queueNote}</div>
+          <div style="color:#5a3820;">⚔ Battle: ~${fmtTime(battleSec)}</div>
+          ${isHq ? '<div style="color:#cc2222;font-size:17px;margin-top:4px;">☠ HQ — capturing this ends the war!</div>' : ''}
+        </div>
+        <button id="confirmAttackBtn" class="mc-btn red" style="width:100%;font-size:22px;padding:9px 0;">⚔ START ATTACK</button>`;
+      const btn = body.querySelector('#confirmAttackBtn');
+      if (btn) btn.addEventListener('click', () => {
+        socketCtrl.startAttack(name);
+        overlay.style.display = 'none';
+      });
+    }
+    overlay.style.display = 'flex';
   }
 
   // ─── War Result ───────────────────────────────────────────────────────────────
-  function showWarResult(result, stats) {
+  function showWarResult(result, capturedTerritory, stats) {
     const atkWins = result === 'attacker_wins';
     E.warResultHdr.className = 'war-result-hdr ' + (atkWins ? 'atk' : 'def');
     E.warResultHdr.textContent = atkWins ? '⚔ TERRITORY CAPTURED!' : '🛡 DEFENSE HELD!';
+    const rows = [];
+    if (capturedTerritory) rows.push(['Territory', capturedTerritory]);
     if (stats) {
-      const wtn = WAR_TYPES[stats.attackerWarType];
-      E.warResultStats.innerHTML = [
-        ['HQ Territory', stats.hq || '—'],
-        ['Tower HP',     fmt(stats.towerHP)],
-        ['Effective HP', fmt(stats.effectiveHP)],
-        ['Connections',  `+${Math.round((1 + 0.3 * (stats.connections || 0)) * 100 - 100)}% bonus`],
-        ['Attacker',     wtn ? wtn.label : '—'],
-        ['Attacker DPS', fmt(stats.attackerDPS)],
-        ['War Duration', fmtTime(stats.warTimeSeconds || 0)],
-      ].map(([k, v]) => `<div class="wr-stat"><span class="wr-key">${k}</span><span class="wr-val">${v}</span></div>`).join('');
+      const wtn = WAR_TYPES[stats.warType] || WAR_TYPES.normal;
+      rows.push(
+        ['Tower HP',    fmt(stats.towerHP || 0)],
+        ['Effective HP',fmt(stats.effectiveHP || 0)],
+        ['War Team',    wtn.label],
+        ['Queue Time',  fmtTime(stats.queueSeconds || 0)],
+        ['Battle Time', fmtTime(stats.battleSeconds || 0)],
+      );
     }
+    E.warResultStats.innerHTML = rows.map(([k,v]) =>
+      `<div class="wr-stat"><span class="wr-key">${k}</span><span class="wr-val">${v}</span></div>`
+    ).join('');
     E.warResultOver.style.display = 'flex';
   }
 
@@ -568,15 +671,17 @@
     const room = state.currentRoom;
     if (!room) return;
     const selected = room.selectedTerritories || [];
-    E.tMenuSelect.innerHTML = selected.map(t =>
-      `<option value="${t}"${t === name ? ' selected' : ''}>${t}${t === room.hqTerritory ? ' 👑' : ''}</option>`
-    ).join('');
+    if (E.tMenuSelect) {
+      E.tMenuSelect.innerHTML = selected.map(t =>
+        `<option value="${t}"${t === name ? ' selected' : ''}>${t}${t === room.hqTerritory ? ' 👑' : ''}</option>`
+      ).join('');
+    }
     renderMenuContent();
-    E.tMenuOverlay.style.display = 'flex';
+    if (E.tMenuOverlay) E.tMenuOverlay.style.display = 'flex';
   }
-  function closeMenu() { E.tMenuOverlay.style.display = 'none'; state.activeMenu = null; }
+  function closeMenu() { if (E.tMenuOverlay) E.tMenuOverlay.style.display = 'none'; state.activeMenu = null; }
   function refreshMenuIfOpen() {
-    if (state.activeMenu && E.tMenuOverlay.style.display !== 'none') renderMenuContent();
+    if (state.activeMenu && E.tMenuOverlay && E.tMenuOverlay.style.display !== 'none') renderMenuContent();
   }
 
   function renderMenuContent() {
@@ -584,8 +689,8 @@
     const room = state.currentRoom;
     if (!name || !room) return;
     E.tMenuTitle.textContent = name + (name === room.hqTerritory ? ' 👑' : '');
-    const isDefender   = state.role === 'defender';
-    const interactive  = (room.status === 'prep' || room.status === 'playing') && isDefender;
+    const isDefender  = state.role === 'defender';
+    const interactive = (room.status === 'prep' || room.status === 'playing') && isDefender;
     const tab = state.activeTab;
     if      (tab === 'upgrades') renderTabUpgrades(name, room, interactive);
     else if (tab === 'bonuses')  renderTabBonuses(name, room, interactive);
@@ -594,11 +699,10 @@
     else if (tab === 'info')     renderTabInfo(name, room);
   }
 
-  /* ── Tab: Upgrades ────────────────────────────────────────────────────────── */
+  /* ── Upgrades ─────────────────────────────────────────────────────────────── */
   function renderTabUpgrades(name, room, interactive) {
     const upg = (room.territoryUpgrades && room.territoryUpgrades[name]) || {};
     const cats = ['damage', 'attackSpeed', 'health', 'defense'];
-
     let html = '<div class="upg-grid">';
     cats.forEach(cat => {
       const lv = parseInt(upg[cat] || 0);
@@ -607,53 +711,33 @@
       const nextD = maxed ? 0 : (UPGRADE_COSTS_PER_LEVEL[lv + 1] || 0);
       const bars  = Array.from({length: 11}, (_, i) => `<span class="${i < lv ? 'on' + (maxed ? ' maxed' : '') : ''}"></span>`).join('');
       html += `<div class="upg-card${maxed ? ' maxed' : ''}">
-        <div class="upg-hdr">
-          <span class="upg-icon">${UPGRADE_ICON[cat]}</span>
-          <span class="upg-name">${UPGRADE_LABEL[cat]}</span>
-          <span class="upg-res">${UPGRADE_RESOURCE[cat]}</span>
-        </div>
-        <div class="upg-lv">
-          <span class="lv-badge${maxed ? ' maxed' : ''}">Lv${lv}</span>
-          <div class="seg-bar" style="flex:1;">${bars}</div>
-        </div>
-        <div class="upg-cost">Drain: ${drain ? fmt(drain) + ' ' + UPGRADE_RESOURCE[cat] + '/hr' : '—'}</div>
-        ${!maxed ? `<div class="upg-cost" style="color:#2a5020;">Next: ${fmt(nextD)}/hr</div>` : '<div class="upg-cost" style="color:#3a7020;">MAX LEVEL ★</div>'}
+        <div class="upg-hdr"><span class="upg-icon">${UPGRADE_ICON[cat]}</span><span class="upg-name">${UPGRADE_LABEL[cat]}</span><span class="upg-res">${UPGRADE_RESOURCE[cat]}</span></div>
+        <div class="upg-lv"><span class="lv-badge${maxed?' maxed':''}">Lv${lv}</span><div class="seg-bar" style="flex:1;">${bars}</div></div>
+        <div class="upg-cost">Drain: ${drain ? fmt(drain) + '/hr' : '—'}</div>
+        ${!maxed ? `<div class="upg-cost" style="color:#2a5020;">Next: ${fmt(nextD)}/hr</div>` : '<div class="upg-cost" style="color:#3a7020;">MAX ★</div>'}
         ${interactive && !maxed ? `<button class="mc-btn green upg-btn" data-cat="${cat}" style="width:100%;margin-top:4px;font-size:16px;">UPGRADE</button>` : ''}
       </div>`;
     });
-
     // Storage (full width)
-    const sl    = parseInt(upg.storage || 0);
-    const smaxed = sl >= 11;
+    const sl = parseInt(upg.storage || 0); const smaxed = sl >= 11;
     const sbars = Array.from({length: 11}, (_, i) => `<span class="${i < sl ? 'on' + (smaxed ? ' maxed' : '') : ''}"></span>`).join('');
     const isHq  = name === room.hqTerritory;
     html += `<div class="stor-card">
       <div class="upg-hdr"><span class="upg-icon">📦</span><span class="upg-name">Storage</span></div>
-      <div class="upg-lv">
-        <span class="lv-badge${smaxed ? ' maxed' : ''}">Lv${sl}/11</span>
-        <div class="seg-bar" style="flex:1;">${sbars}</div>
-      </div>
-      <div class="upg-cost">${isHq
-        ? 'HQ cap: ' + fmt(hqCap(sl, 'resource')) + ' resources / ' + fmt(hqCap(sl, 'emeralds')) + ' em'
-        : 'Non-HQ: unlimited pass-through storage'}</div>
+      <div class="upg-lv"><span class="lv-badge${smaxed?' maxed':''}">Lv${sl}/11</span><div class="seg-bar" style="flex:1;">${sbars}</div></div>
+      <div class="upg-cost">${isHq ? 'HQ cap: ' + fmt(hqCap(sl,'resource')) + ' res / ' + fmt(hqCap(sl,'emeralds')) + ' em' : 'Non-HQ: unlimited pass-through'}</div>
       ${interactive && !smaxed ? `<button class="mc-btn upg-btn" data-cat="storage" style="width:100%;margin-top:4px;font-size:16px;">UPGRADE STORAGE</button>` : ''}
-    </div>`;
-    html += '</div>';
-
-    // HQ Selector
+    </div></div>`;
+    // HQ selector
     if (interactive) {
       const sel = (room.selectedTerritories || []).map(t =>
-        `<option value="${t}"${t === room.hqTerritory ? ' selected' : ''}>${t}</option>`
-      ).join('');
-      html += `<div class="hq-sel-box">
-        <div class="mc-label" style="margin-bottom:6px;">Set Guild HQ Territory</div>
+        `<option value="${t}"${t === room.hqTerritory ? ' selected' : ''}>${t}</option>`).join('');
+      html += `<div class="hq-sel-box"><div class="mc-label" style="margin-bottom:6px;">Set Guild HQ Territory</div>
         <div style="display:flex;gap:8px;align-items:center;">
           <select id="hqSelDd" style="flex:1;font-family:VT323,monospace;font-size:16px;background:#2d2418;color:#f0e0a0;border:2px solid #373737;padding:3px 6px;">${sel}</select>
           <button id="setHqBtn" class="mc-btn green" style="font-size:16px;">Set HQ</button>
-        </div>
-      </div>`;
+        </div></div>`;
     }
-
     E.tMenuBody.innerHTML = html;
     E.tMenuBody.querySelectorAll('.upg-btn').forEach(btn => {
       btn.addEventListener('click', function () { socketCtrl.applyUpgrade(name, this.dataset.cat); });
@@ -667,105 +751,72 @@
     }
   }
 
-  /* ── Tab: Bonuses ─────────────────────────────────────────────────────────── */
+  /* ── Bonuses ──────────────────────────────────────────────────────────────── */
   function renderTabBonuses(name, room, interactive) {
     const bon = (room.territoryBonuses && room.territoryBonuses[name]) || {};
-    let html = '';
     const towerBonus = ['strongerMobs', 'multiAttack', 'aura', 'volley'];
     const ecoBonus   = ['resourceProduction', 'emeraldProduction'];
-
-    html += '<div class="bonus-sec-hdr">🏰 Tower Bonuses</div><div class="bonus-list">';
+    let html = '<div class="bonus-sec-hdr">🏰 Tower Bonuses</div><div class="bonus-list">';
     towerBonus.forEach(key => {
-      const def = BONUS_DEFS[key];
-      const lv  = parseInt(bon[key] || 0);
-      const maxed = lv >= def.maxLevel;
-      html += bonusCard(name, key, def, lv, maxed, interactive);
+      const def = BONUS_DEFS[key]; const lv = parseInt(bon[key] || 0); const maxed = lv >= def.maxLevel;
+      html += bonusCard(key, def, lv, maxed, interactive);
     });
-    html += '</div><div class="bonus-divider"></div>';
-    html += '<div class="bonus-sec-hdr">📈 Economy Bonuses</div><div class="bonus-list">';
+    html += '</div><div class="bonus-divider"></div><div class="bonus-sec-hdr">📈 Economy Bonuses</div><div class="bonus-list">';
     ecoBonus.forEach(key => {
-      const def = BONUS_DEFS[key];
-      const lv  = parseInt(bon[key] || 0);
-      const maxed = lv >= def.maxLevel;
-      html += bonusCard(name, key, def, lv, maxed, interactive);
+      const def = BONUS_DEFS[key]; const lv = parseInt(bon[key] || 0); const maxed = lv >= def.maxLevel;
+      html += bonusCard(key, def, lv, maxed, interactive);
     });
     html += '</div>';
-
     E.tMenuBody.innerHTML = html;
     E.tMenuBody.querySelectorAll('.bonus-btn').forEach(btn => {
       btn.addEventListener('click', function () { socketCtrl.applyBonus(name, this.dataset.key); });
     });
   }
-  function bonusCard(name, key, def, lv, maxed, interactive) {
-    const drain = def.costs[lv] || 0;
-    const nextD = maxed ? 0 : (def.costs[lv + 1] || 0);
+  function bonusCard(key, def, lv, maxed, interactive) {
+    const drain = def.costs[lv] || 0; const nextD = maxed ? 0 : (def.costs[lv+1] || 0);
     return `<div class="bonus-card">
       <div class="bonus-icon-cell">${def.icon}</div>
       <div class="bonus-info">
         <div class="bonus-name">${def.label} <span style="color:#4a7030;font-size:14px;">Lv${lv}/${def.maxLevel}</span></div>
-        <div class="bonus-desc">${def.desc}</div>
-        <div class="bonus-desc">Resource: ${def.resource} | Drain: ${drain ? fmt(drain) + '/hr' : '—'}</div>
-        ${!maxed ? `<div class="bonus-desc" style="color:#2a5020;">Next level: ${fmt(nextD)} ${def.resource}/hr</div>` : '<div class="bonus-desc" style="color:#3a7020;">MAX LEVEL ★</div>'}
+        <div class="bonus-desc">${def.desc} | ${def.resource} | ${drain ? fmt(drain) + '/hr' : '—'}</div>
+        ${!maxed ? `<div class="bonus-desc" style="color:#2a5020;">Next: ${fmt(nextD)} ${def.resource}/hr</div>` : '<div class="bonus-desc" style="color:#3a7020;">MAX ★</div>'}
       </div>
       ${interactive && !maxed ? `<button class="mc-btn green bonus-btn" data-key="${key}" style="font-size:20px;padding:4px 10px;">+</button>` : ''}
     </div>`;
   }
 
-  /* ── Tab: Storage ─────────────────────────────────────────────────────────── */
+  /* ── Storage ──────────────────────────────────────────────────────────────── */
   function renderTabStorage(name, room, interactive) {
-    const isHq = name === room.hqTerritory;
+    const isHq  = name === room.hqTerritory;
     const upg   = (room.territoryUpgrades && room.territoryUpgrades[name]) || {};
     const sl    = parseInt(upg.storage || 0);
-    const store  = (room.perTerritoryStorage && room.perTerritoryStorage[name]) || {};
+    const store = (room.perTerritoryStorage && room.perTerritoryStorage[name]) || {};
     let html = '';
-
     if (isHq) {
       html += '<div class="mc-label" style="margin-bottom:8px;">📦 HQ Resource Bank</div>';
-      const RES = [
-        { key:'emeralds', icon:'🟡', label:'Emeralds' },
-        { key:'wood',     icon:'🪵', label:'Wood'     },
-        { key:'ore',      icon:'⛏',  label:'Ore'      },
-        { key:'crops',    icon:'🌾', label:'Crops'    },
-        { key:'fish',     icon:'🐟', label:'Fish'     },
-      ];
-      RES.forEach(r => {
-        const val  = store[r.key] || 0;
-        const cap  = hqCap(sl, r.key);
-        const pct  = Math.min(100, (val / cap) * 100);
-        const over = val > cap;
-        const fcls = over ? 'danger' : pct > 75 ? 'warn' : '';
+      [['emeralds','🟡'],['wood','🪵'],['ore','⛏'],['crops','🌾'],['fish','🐟']].forEach(([k,ico]) => {
+        const val = store[k] || 0; const cap = hqCap(sl, k);
+        const pct = Math.min(100, cap ? (val / cap) * 100 : 0);
+        const fcls = val > cap ? 'danger' : pct > 75 ? 'warn' : '';
         html += `<div class="hq-res-bar">
-          <div class="hq-res-lbl">
-            <span>${r.icon} ${r.label}</span>
-            <span class="${over ? 'over' : ''}">${fmt(val)} / ${fmt(cap)}</span>
-          </div>
+          <div class="hq-res-lbl"><span>${ico} ${k}</span><span class="${val>cap?'over':''}">${fmt(val)} / ${fmt(cap)}</span></div>
           <div class="mc-bar-bg"><div class="mc-bar-fill ${fcls}" style="width:${pct}%;"></div></div>
         </div>`;
       });
     } else {
-      html += `<div class="passthrough-box">
-        📦 Non-HQ Territory<br>Resources pass through freely toward HQ each tick.<br>No local storage cap applied.
-      </div>`;
-      const transitKeys = Object.keys(store).filter(k => (store[k] || 0) > 0);
-      if (transitKeys.length) {
-        html += '<div class="mc-label" style="margin-bottom:6px;">In Transit</div>';
-        transitKeys.forEach(k => { html += `<div class="mc-small">${k}: ${fmt(store[k])}</div>`; });
-      }
+      html += `<div class="passthrough-box">📦 Non-HQ Territory<br>Resources pass through freely toward HQ each tick.</div>`;
+      Object.keys(store).filter(k => (store[k] || 0) > 0).forEach(k => {
+        html += `<div class="mc-small">${k}: ${fmt(store[k])}</div>`;
+      });
     }
-
-    // Storage upgrade button
     const smaxed = sl >= 11;
     html += `<div style="margin-top:10px;"><div class="upg-lv">
-      <span class="lv-badge${smaxed ? ' maxed' : ''}">Lv ${sl}/11</span>
+      <span class="lv-badge${smaxed?' maxed':''}">Lv ${sl}/11</span>
       <div class="seg-bar" style="flex:1;">${Array.from({length:11},(_,i)=>`<span class="${i<sl?'on'+(smaxed?' maxed':''):''}"></span>`).join('')}</div>
     </div>`;
-    if (interactive && !smaxed && isHq) {
-      html += `<button class="mc-btn upg-btn" data-cat="storage" style="width:100%;margin-top:6px;font-size:16px;">UPGRADE STORAGE</button>`;
-    } else if (!isHq && interactive) {
-      html += `<button id="makeHqBtn" class="mc-btn blue" style="width:100%;margin-top:6px;font-size:18px;">👑 Set as HQ</button>`;
-    }
+    if (interactive && !smaxed && isHq) html += `<button class="mc-btn upg-btn" data-cat="storage" style="width:100%;margin-top:6px;font-size:16px;">UPGRADE STORAGE</button>`;
+    else if (!isHq && interactive)     html += `<button id="makeHqBtn" class="mc-btn blue" style="width:100%;margin-top:6px;font-size:18px;">👑 Set as HQ</button>`;
     html += '</div>';
-
     E.tMenuBody.innerHTML = html;
     const ub = E.tMenuBody.querySelector('.upg-btn');
     if (ub) ub.addEventListener('click', () => socketCtrl.applyUpgrade(name, 'storage'));
@@ -773,111 +824,84 @@
     if (hqb) hqb.addEventListener('click', () => socketCtrl.setHqTerritory(name));
   }
 
-  /* ── Tab: Tax & Route ─────────────────────────────────────────────────────── */
+  /* ── Tax & Route ──────────────────────────────────────────────────────────── */
   function renderTabTax(name, room, interactive) {
-    const tax     = (room.territoryTaxRates && room.territoryTaxRates[name]) || { enemy: 0.30, ally: 0.10 };
-    const routeM  = (room.territoryRouteMode && room.territoryRouteMode[name]) || 'fastest';
-    const hq      = room.hqTerritory || '';
+    const tax   = (room.territoryTaxRates && room.territoryTaxRates[name]) || { enemy: 0.30, ally: 0.10 };
+    const routeM = (room.territoryRouteMode && room.territoryRouteMode[name]) || 'fastest';
+    const hq    = room.hqTerritory || '';
     const selected = room.selectedTerritories || [];
-    const adj     = buildAdjacency(selected);
-    const path    = bfsHq(name, hq, adj);
-    const pathStr = path ? path.join(' → ') : 'No route to HQ';
-    const hops    = path ? path.length - 1 : '?';
-
+    const adj   = buildAdjacency(selected);
+    const path  = bfsHq(name, hq, adj);
+    const hops  = path ? path.length - 1 : '?';
     let html = `<div class="mc-label" style="margin-bottom:6px;">Routing Mode</div>
     <div class="route-toggle">
-      <button class="mc-btn${routeM === 'fastest' ? ' green' : ''} route-btn" data-mode="fastest" style="flex:1;">⚡ Fastest</button>
-      <button class="mc-btn${routeM === 'cheapest' ? ' green' : ''} route-btn" data-mode="cheapest" style="flex:1;">💰 Cheapest</button>
+      <button class="mc-btn${routeM==='fastest'?' green':''} route-btn" data-mode="fastest" style="flex:1;">⚡ Fastest</button>
+      <button class="mc-btn${routeM==='cheapest'?' green':''} route-btn" data-mode="cheapest" style="flex:1;">💰 Cheapest</button>
     </div>
     <div class="route-preview">
-      <span class="mc-small">Route to HQ:</span><br>
-      ${path ? path.join(' → ') : '<span style="color:#cc3333;">No route found</span>'}
+      Route to HQ: ${path ? path.join(' → ') : '<span style="color:#cc3333;">No route</span>'}
       ${path ? `<br><span class="mc-small">Hops: ${hops}</span>` : ''}
     </div>
     <div style="margin-top:12px;">
-      <div class="mc-label" style="margin-bottom:8px;">Tax Rates (informational display)</div>
-      <div class="tax-row">
-        <div class="tax-lbl">Enemy Tax: <span id="eTaxLbl">${Math.round(tax.enemy * 100)}%</span></div>
-        <input type="range" class="tax-slider" id="eTaxSlider" min="5" max="40" value="${Math.round(tax.enemy * 100)}" ${!interactive ? 'disabled' : ''}>
-      </div>
-      <div class="tax-row">
-        <div class="tax-lbl">Ally Tax: <span id="aTaxLbl">${Math.round(tax.ally * 100)}%</span></div>
-        <input type="range" class="tax-slider" id="aTaxSlider" min="5" max="40" value="${Math.round(tax.ally * 100)}" ${!interactive ? 'disabled' : ''}>
-      </div>
-      ${interactive ? '<button id="saveTaxBtn" class="mc-btn green" style="width:100%;font-size:16px;margin-top:6px;">💾 Save Tax Rates</button>' : ''}
+      <div class="mc-label" style="margin-bottom:8px;">Tax Rates (display)</div>
+      <div class="tax-row"><div class="tax-lbl">Enemy: <span id="eTaxLbl">${Math.round(tax.enemy*100)}%</span></div>
+        <input type="range" class="tax-slider" id="eTaxSlider" min="5" max="40" value="${Math.round(tax.enemy*100)}" ${!interactive?'disabled':''}></div>
+      <div class="tax-row"><div class="tax-lbl">Ally: <span id="aTaxLbl">${Math.round(tax.ally*100)}%</span></div>
+        <input type="range" class="tax-slider" id="aTaxSlider" min="5" max="40" value="${Math.round(tax.ally*100)}" ${!interactive?'disabled':''}></div>
+      ${interactive ? '<button id="saveTaxBtn" class="mc-btn green" style="width:100%;font-size:16px;margin-top:6px;">💾 Save</button>' : ''}
     </div>`;
-
     E.tMenuBody.innerHTML = html;
-
     E.tMenuBody.querySelectorAll('.route-btn').forEach(btn => {
-      btn.addEventListener('click', function () {
-        if (interactive) socketCtrl.setRouteMode(name, this.dataset.mode);
-      });
+      btn.addEventListener('click', function () { if (interactive) socketCtrl.setRouteMode(name, this.dataset.mode); });
     });
-    const es = E.tMenuBody.querySelector('#eTaxSlider');
-    const as = E.tMenuBody.querySelector('#aTaxSlider');
-    const el = E.tMenuBody.querySelector('#eTaxLbl');
-    const al = E.tMenuBody.querySelector('#aTaxLbl');
+    const es = E.tMenuBody.querySelector('#eTaxSlider'), as = E.tMenuBody.querySelector('#aTaxSlider');
+    const el = E.tMenuBody.querySelector('#eTaxLbl'),   al = E.tMenuBody.querySelector('#aTaxLbl');
     if (es) es.addEventListener('input', function () { el.textContent = this.value + '%'; });
     if (as) as.addEventListener('input', function () { al.textContent = this.value + '%'; });
     const sb = E.tMenuBody.querySelector('#saveTaxBtn');
-    if (sb) sb.addEventListener('click', () => socketCtrl.setTaxRate(name, parseFloat(es.value) / 100, parseFloat(as.value) / 100));
+    if (sb) sb.addEventListener('click', () => socketCtrl.setTaxRate(name, parseFloat(es.value)/100, parseFloat(as.value)/100));
   }
 
-  /* ── Tab: Info ────────────────────────────────────────────────────────────── */
+  /* ── Info ─────────────────────────────────────────────────────────────────── */
   function renderTabInfo(name, room) {
-    const t     = state.territoryByName.get(name);
-    const isHq  = name === room.hqTerritory;
-    const upg   = (room.territoryUpgrades  && room.territoryUpgrades[name])  || {};
-    const bon   = (room.territoryBonuses   && room.territoryBonuses[name])   || {};
-    const held  = room.territoryHeldSince  && room.territoryHeldSince[name];
-    const sel   = room.selectedTerritories || [];
+    const t    = state.territoryByName.get(name);
+    const isHq = name === room.hqTerritory;
+    const upg  = (room.territoryUpgrades && room.territoryUpgrades[name]) || {};
+    const bon  = (room.territoryBonuses  && room.territoryBonuses[name])  || {};
+    const held = room.territoryHeldSince && room.territoryHeldSince[name];
+    const sel  = room.selectedTerritories || [];
     const selSt = new Set(sel);
     const routes = t ? t.tradeRoutes : [];
-    const conns = routes.filter(r => r !== name && selSt.has(r)).length;
-    const connMult = (1 + 0.3 * conns).toFixed(1);
-
+    const conns  = routes.filter(r => r !== name && selSt.has(r)).length;
     let treaPct = 0;
     if (held) treaPct = Math.min(100, Math.floor((Date.now() - held) / 3600000) * 5);
-
-    const resProdLv = bon.resourceProduction || 0;
-    const emProdLv  = bon.emeraldProduction  || 0;
-    const resMult   = 1 + (treaPct / 100) + (resProdLv * 0.10);
-    const emMult    = 1 + (treaPct / 100) + (emProdLv  * 0.10);
-
-    const RES_ICONS = { emeralds: '🟡', wood: '🪵', ore: '⛏', crops: '🌾', fish: '🐟' };
-
+    const resMult = 1 + (treaPct/100) + ((bon.resourceProduction||0)*0.10);
+    const emMult  = 1 + (treaPct/100) + ((bon.emeraldProduction||0)*0.10);
+    const icons = { emeralds:'🟡', wood:'🪵', ore:'⛏', crops:'🌾', fish:'🐟' };
     let html = `
       <div class="info-row"><span class="info-key">📍 Territory</span><span class="info-val">${name}</span></div>
-      ${isHq ? '<div class="info-row"><span class="info-key">👑 Status</span><span class="info-val">Guild HQ</span></div>' : ''}
-      <div class="info-row"><span class="info-key">🔗 Connections</span><span class="info-val">${conns} (×${connMult} tower HP)</span></div>
-      <div class="info-row"><span class="info-key">⏱ Treasury Bonus</span><span class="info-val"><span class="treasury-badge">+${treaPct}%</span></span></div>
+      ${isHq?'<div class="info-row"><span class="info-key">👑 Status</span><span class="info-val">Guild HQ</span></div>':''}
+      <div class="info-row"><span class="info-key">🔗 Connections</span><span class="info-val">${conns} (×${(1+0.3*conns).toFixed(1)} HP)</span></div>
+      <div class="info-row"><span class="info-key">⏱ Treasury</span><span class="info-val"><span class="treasury-badge">+${treaPct}%</span></span></div>
       <div class="info-divider"></div>
-      <div class="mc-label" style="margin-bottom:6px;">Production / tick (base → actual)</div>`;
-
+      <div class="mc-label" style="margin-bottom:6px;">Production / tick</div>`;
     if (t) {
-      ['emeralds','wood','ore','crops','fish'].forEach(k => {
-        const base = t.resources[k] || 0;
+      Object.entries(t.resources).forEach(([k, base]) => {
         if (!base) return;
         const mult = k === 'emeralds' ? emMult : resMult;
-        const eff  = Math.floor(base * mult);
-        html += `<div class="info-row"><span class="info-key">${RES_ICONS[k]} ${k}</span><span class="info-val">${fmt(base)} → ${fmt(eff)}</span></div>`;
+        html += `<div class="info-row"><span class="info-key">${icons[k]} ${k}</span><span class="info-val">${fmt(base)} → ${fmt(Math.floor(base*mult))}</span></div>`;
       });
     }
-
-    const upgRadar = ['damage','attackSpeed','health','defense'].filter(c => upg[c]);
-    const bonRadar = Object.keys(BONUS_DEFS).filter(k => bon[k]);
-    if (upgRadar.length || bonRadar.length) {
-      html += `<div class="info-divider"></div><div class="mc-label" style="margin-bottom:6px;">Upgrades & Bonuses</div>`;
-      upgRadar.forEach(c => {
-        html += `<div class="info-row"><span class="info-key">${UPGRADE_ICON[c]} ${UPGRADE_LABEL[c]}</span><span class="info-val">Lv${upg[c]}/11</span></div>`;
-      });
-      bonRadar.forEach(k => {
-        const def = BONUS_DEFS[k];
-        html += `<div class="info-row"><span class="info-key">${def.icon} ${def.label}</span><span class="info-val">Lv${bon[k]}/${def.maxLevel}</span></div>`;
+    const upgr = ['damage','attackSpeed','health','defense'].filter(c => upg[c]);
+    const bonr = Object.keys(BONUS_DEFS).filter(k => bon[k]);
+    if (upgr.length || bonr.length) {
+      html += `<div class="info-divider"></div><div class="mc-label" style="margin-bottom:6px;">Active Upgrades & Bonuses</div>`;
+      upgr.forEach(c => { html += `<div class="info-row"><span class="info-key">${UPGRADE_ICON[c]} ${UPGRADE_LABEL[c]}</span><span class="info-val">Lv${upg[c]}/11</span></div>`; });
+      bonr.forEach(k => {
+        const d = BONUS_DEFS[k];
+        html += `<div class="info-row"><span class="info-key">${d.icon} ${d.label}</span><span class="info-val">Lv${bon[k]}/${d.maxLevel}</span></div>`;
       });
     }
-
     E.tMenuBody.innerHTML = html;
   }
 
@@ -892,7 +916,7 @@
 
       state.socket.on('connect', () => {
         state.connected = true;
-        E.statusText.textContent = '🟢 ' + base.replace('https://', '').replace('http://', '');
+        E.statusText.textContent = '🟢 ' + base.replace('https://','').replace('http://','');
         this.tryResume();
       });
       state.socket.on('disconnect', () => {
@@ -903,12 +927,9 @@
       state.socket.on('roomState', room => {
         state.currentRoom = room;
         if (!state.role) state.role = inferRole(room);
-        // Sync local selectedSet from server
         state.selectedSet = new Set(room.selectedTerritories || []);
-        renderSidebar();
-        updateAllStyles();
-        renderRoutes();
-        refreshMenuIfOpen();
+        if (!room.currentAttack && state.attackCdTimer) { clearInterval(state.attackCdTimer); state.attackCdTimer = null; }
+        renderSidebar(); updateAllStyles(); renderRoutes(); refreshMenuIfOpen();
       });
 
       state.socket.on('tick:update', payload => {
@@ -919,7 +940,7 @@
         E.resCr.textContent = fmt(res.crops);
         E.resFi.textContent = fmt(res.fish);
         const msgs = payload.messages || [];
-        E.tickMsgs.innerHTML = msgs.slice(0, 8).map(m => `<li style="font-size:11px;color:#f8d9a7;">${m}</li>`).join('');
+        E.tickMsgs.innerHTML = msgs.slice(0,8).map(m => `<li style="font-size:11px;color:#f8d9a7;">${m}</li>`).join('');
         if (payload.nextTickInMs) startTickCd(payload.nextTickInMs);
         refreshMenuIfOpen();
       });
@@ -931,40 +952,62 @@
         }
         E.prepCd.style.display = 'block';
         E.prepCd.textContent = '⏱ Prep ends in: ' + payload.secondsRemaining + 's';
-        if (state.role === 'attacker') renderWarPanel();
         renderSidebar();
       });
 
       state.socket.on('statusChanged', ({ status }) => {
         if (state.currentRoom) state.currentRoom.status = status;
+        if (status === 'lobby' && state.attackCdTimer) { clearInterval(state.attackCdTimer); state.attackCdTimer = null; }
         renderSidebar();
-        if (status === 'lobby') {
-          E.warCdBar.style.display = 'none';
-          if (state.warCdTimer) { clearInterval(state.warCdTimer); state.warCdTimer = null; }
+      });
+
+      // Server emitted when prep ends → playing begins (no auto-war)
+      state.socket.on('playing:started', payload => {
+        if (state.role === 'attacker' && E.attackStatusBar) {
+          E.attackStatusBar.style.display = 'block';
+          E.attackStatusBar.innerHTML = `<div style="font-family:VT323,monospace;font-size:15px;color:#88ff88;">${payload.message || 'Prep complete! Choose a territory to attack.'}</div>`;
         }
+        renderSidebar();
       });
 
       state.socket.on('war:estimates', payload => {
         state.warEstimates = payload;
         renderSidebar();
-        if (state.role === 'attacker') renderWarPanel();
       });
 
-      state.socket.on('war:started', stats => {
+      // ── Attack flow events ─────────────────────────────────────────────────
+      state.socket.on('attack:queued', payload => {
         if (state.currentRoom) {
-          state.currentRoom.warStartedAt  = Date.now();
-          state.currentRoom.warTimeSeconds = stats.warTimeSeconds;
-          state.currentRoom.warTowerStats  = stats;
+          state.currentRoom.currentAttack = {
+            territory: payload.territory, phase: 'queue',
+            queueEndsAt: payload.queueEndsAt, battleEndsAt: payload.battleEndsAt
+          };
         }
-        E.warPanel.style.display = 'none';
-        startWarCountdown(Date.now(), stats.warTimeSeconds);
-        playSfx('warn');
+        playSfx('warn'); updateAllStyles(); renderSidebar();
       });
 
-      state.socket.on('war:ended', ({ result, warTowerStats }) => {
-        E.warCdBar.style.display = 'none';
-        if (state.warCdTimer) { clearInterval(state.warCdTimer); state.warCdTimer = null; }
-        showWarResult(result, warTowerStats);
+      state.socket.on('attack:battle', payload => {
+        if (state.currentRoom && state.currentRoom.currentAttack) {
+          state.currentRoom.currentAttack.phase = 'battle';
+        }
+        playSfx('warn'); updateAllStyles(); renderSidebar();
+      });
+
+      state.socket.on('attack:captured', ({ territory }) => {
+        if (state.currentRoom) {
+          state.currentRoom.selectedTerritories =
+            (state.currentRoom.selectedTerritories || []).filter(t => t !== territory);
+          if (!state.currentRoom.attackerCapturedTerritories)
+            state.currentRoom.attackerCapturedTerritories = [];
+          state.currentRoom.attackerCapturedTerritories.push(territory);
+          state.currentRoom.currentAttack = null;
+          state.selectedSet.delete(territory);
+        }
+        playSfx('success'); updateAllStyles(); renderRoutes(); renderSidebar();
+      });
+
+      state.socket.on('war:ended', ({ result, capturedTerritory, warTowerStats }) => {
+        showWarResult(result, capturedTerritory, warTowerStats);
         playSfx(result === 'attacker_wins' ? 'success' : 'warn');
       });
 
@@ -980,12 +1023,8 @@
       state.resumeInFlight = true;
       state.socket.emit('resumeRoom', { roomId: sess.roomId, playerToken: sess.playerToken }, res => {
         state.resumeInFlight = false;
-        if (res && res.ok) {
-          state.role = res.role;
-          if (res.role === 'defender') state.armedForDefenderCreate = true;
-        } else {
-          clearSession();
-        }
+        if (res && res.ok) { state.role = res.role; }
+        else clearSession();
       });
     },
 
@@ -995,9 +1034,7 @@
         if (res && res.ok) {
           state.role = 'defender';
           saveSession({ roomId: res.roomId, playerToken: res.playerToken, role: 'defender' });
-        } else {
-          alert(res && res.error ? res.error : 'Could not create room.');
-        }
+        } else alert(res && res.error ? res.error : 'Could not create room.');
       });
     },
 
@@ -1007,9 +1044,7 @@
         if (res && res.ok) {
           state.role = 'attacker';
           saveSession({ roomId: res.roomId, playerToken: res.playerToken, role: 'attacker' });
-        } else {
-          alert(res && res.error ? res.error : 'Could not join.');
-        }
+        } else alert(res && res.error ? res.error : 'Could not join.');
       });
     },
 
@@ -1061,16 +1096,16 @@
     selectWarType(warType) {
       if (!state.socket) return;
       state.socket.emit('attacker:selectWarType', { warType }, res => {
-        if (res && res.ok) {
+        if (res && res.ok && res.estimates) {
           state.warEstimates = { towerStats: state.warEstimates && state.warEstimates.towerStats, estimates: res.estimates };
         }
       });
     },
 
-    requestWarEstimates() {
+    startAttack(territoryName) {
       if (!state.socket) return;
-      state.socket.emit('war:getEstimates', null, res => {
-        if (res && res.ok) { state.warEstimates = res; if (state.role === 'attacker') renderWarPanel(); }
+      state.socket.emit('attacker:attack', { territoryName }, res => {
+        if (res && !res.ok) alert('Attack failed: ' + (res.error || '?'));
       });
     },
   };
@@ -1087,24 +1122,20 @@
   E.createBtn.addEventListener('click', () => socketCtrl.createRoom());
   E.joinBtn.addEventListener('click', () => socketCtrl.joinRoom((E.joinInput.value || '').trim()));
   E.joinInput.addEventListener('keydown', e => { if (e.key === 'Enter') socketCtrl.joinRoom((E.joinInput.value || '').trim()); });
-
   E.copyCode.addEventListener('click', () => {
     const code = state.currentRoom && state.currentRoom.id;
     if (code) navigator.clipboard.writeText(code).catch(() => {});
   });
-
   E.readyBtn.addEventListener('click', () => {
     const room = state.currentRoom;
     if (!room) return;
     const myReady = state.role === 'defender' ? room.defenderReady : room.attackerReady;
     socketCtrl.setReady(!myReady);
   });
-
   E.sfxBtn.addEventListener('click', () => {
     state.sfxEnabled = !state.sfxEnabled;
     E.sfxBtn.textContent = 'SFX: ' + (state.sfxEnabled ? 'ON' : 'OFF');
   });
-
   E.openManageBtn.addEventListener('click', () => {
     const room = state.currentRoom;
     const selected = room && room.selectedTerritories;
@@ -1120,15 +1151,18 @@
       renderMenuContent();
     });
   });
-  E.tMenuSelect.addEventListener('change', function () {
-    state.activeMenu = this.value;
-    renderMenuContent();
+  if (E.tMenuSelect) E.tMenuSelect.addEventListener('change', function () {
+    state.activeMenu = this.value; renderMenuContent();
   });
-  E.tMenuCloseBtn.addEventListener('click', closeMenu);
-  E.tMenuOverlay.addEventListener('click', e => { if (e.target === E.tMenuOverlay) closeMenu(); });
+  if (E.tMenuCloseBtn) E.tMenuCloseBtn.addEventListener('click', closeMenu);
+  if (E.tMenuOverlay) E.tMenuOverlay.addEventListener('click', e => { if (e.target === E.tMenuOverlay) closeMenu(); });
+
+  // Attack overlay
+  if (E.attackCloseBtn) E.attackCloseBtn.addEventListener('click', () => { if (E.attackOverlay) E.attackOverlay.style.display = 'none'; });
+  if (E.attackOverlay)  E.attackOverlay.addEventListener('click', e => { if (e.target === E.attackOverlay) E.attackOverlay.style.display = 'none'; });
 
   // War result
-  E.warResultClose.addEventListener('click', () => { E.warResultOver.style.display = 'none'; });
+  if (E.warResultClose) E.warResultClose.addEventListener('click', () => { E.warResultOver.style.display = 'none'; });
 
   // ─── Boot ────────────────────────────────────────────────────────────────────
   initMap()
