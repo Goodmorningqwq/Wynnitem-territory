@@ -79,6 +79,8 @@
     socketBase: '',
     resumeInFlight: false,
     tickCdTimer: null,
+    liveTickTimer: null,       // 1s interval for real-time resource display
+    liveRates: null,           // { base: {res: N}, netPerSec: {res: N}, capturedAt: ms }
     attackCdTimer: null,
     activeMenu: null,
     activeTab: 'upgrades',
@@ -725,6 +727,103 @@
     state.tickCdTimer = setInterval(paint, 250);
   }
 
+  // ─── Live Resource Ticker ─────────────────────────────────────────────────────
+  // Maps tower upgrade category → resource drained
+  const UPGRADE_RES_MAP = { damage: 'ore', attackSpeed: 'crops', health: 'wood', defense: 'fish' };
+
+  // Sum total hourly drain across all selected territories for each resource
+  function calcHourlyDrainByResource(room) {
+    const d = { emeralds: 0, wood: 0, ore: 0, crops: 0, fish: 0 };
+    (room.selectedTerritories || []).forEach(name => {
+      const upg = (room.territoryUpgrades && room.territoryUpgrades[name]) || {};
+      const bon = (room.territoryBonuses  && room.territoryBonuses[name])  || {};
+      // Tower upgrade drains
+      Object.entries(UPGRADE_RES_MAP).forEach(([cat, res]) => {
+        const lv = parseInt(upg[cat] || 0);
+        if (lv) d[res] += UPGRADE_COSTS_PER_LEVEL[lv] || 0;
+      });
+      // Storage upgrade drains (largerEmeraldStorage costs wood, largerResourceStorage costs emeralds)
+      const emSl = parseInt(upg.largerEmeraldStorage  || 0);
+      const rsSl = parseInt(upg.largerResourceStorage || 0);
+      if (emSl) d.wood     += EMERALD_STORAGE_COSTS_WOOD[emSl]  || 0;
+      if (rsSl) d.emeralds += RESOURCE_STORAGE_COSTS_EM[rsSl]   || 0;
+      // Bonus drains
+      Object.entries(BONUS_DEFS).forEach(([key, def]) => {
+        const lv = STORAGE_BONUS_KEYS.has(key) ? parseInt(upg[key] || 0) : parseInt(bon[key] || 0);
+        if (lv) d[def.resource] += def.costs[lv] || 0;
+      });
+    });
+    return d;
+  }
+
+  // Called after each tick:update — snapshots rates, starts 1s live interpolation
+  function startLiveTick(payload, room) {
+    if (state.liveTickTimer) clearInterval(state.liveTickTimer);
+    const RES = ['emeralds','wood','ore','crops','fish'];
+    const tickMs  = (room && room.tickIntervalMs) || 300000;
+    const tickHrs = tickMs / 3600000;
+
+    // Total hourly GAIN per resource: sum all territory productions
+    const hourlyGain = { emeralds: 0, wood: 0, ore: 0, crops: 0, fish: 0 };
+    Object.values(payload.productions || {}).forEach(terrProd => {
+      RES.forEach(r => { if (terrProd[r]) hourlyGain[r] += terrProd[r] / tickHrs; });
+    });
+
+    // Total hourly DRAIN per resource from all upgrades/bonuses
+    const hourlyDrain = room ? calcHourlyDrainByResource(room) : { emeralds:0,wood:0,ore:0,crops:0,fish:0 };
+
+    // Net per-second rate (positive = gaining, negative = burning)
+    const netPerSec = {};
+    RES.forEach(r => { netPerSec[r] = (hourlyGain[r] - hourlyDrain[r]) / 3600; });
+
+    // Actual values right after the tick resolved
+    const base = {};
+    RES.forEach(r => { base[r] = (payload.defenderResources && payload.defenderResources[r]) || 0; });
+
+    state.liveRates = { base, netPerSec, capturedAt: Date.now() };
+
+    // Lazily bind the delta elements
+    if (!E.resDeltaEm) {
+      E.resDeltaEm = document.getElementById('resDeltaEm');
+      E.resDeltaWo = document.getElementById('resDeltaWo');
+      E.resDeltaOr = document.getElementById('resDeltaOr');
+      E.resDeltaCr = document.getElementById('resDeltaCr');
+      E.resDeltaFi = document.getElementById('resDeltaFi');
+    }
+
+    // Show static hourly rate labels (+green = net gain, red = net drain)
+    const deltaEls = { emeralds: E.resDeltaEm, wood: E.resDeltaWo, ore: E.resDeltaOr, crops: E.resDeltaCr, fish: E.resDeltaFi };
+    RES.forEach(r => {
+      const el = deltaEls[r]; if (!el) return;
+      const rate = netPerSec[r];
+      if (Math.abs(rate) < 0.001) { el.textContent = ''; el.style.color = ''; return; }
+      const sign = rate > 0 ? '+' : '−';
+      const hrly = Math.abs(Math.round(rate * 3600));
+      el.textContent = sign + fmt(hrly) + '/hr';
+      el.style.color = rate > 0 ? '#7fff88' : '#ff7070';
+    });
+
+    // 1-second interval: interpolate the main value display
+    const valEls = { emeralds: E.resEm, wood: E.resWo, ore: E.resOr, crops: E.resCr, fish: E.resFi };
+    state.liveTickTimer = setInterval(() => {
+      if (!state.liveRates) return;
+      const sec = (Date.now() - state.liveRates.capturedAt) / 1000;
+      RES.forEach(r => {
+        const el = valEls[r]; if (!el) return;
+        const live = Math.max(0, Math.round(state.liveRates.base[r] + state.liveRates.netPerSec[r] * sec));
+        el.textContent = fmt(live);
+      });
+    }, 1000);
+  }
+
+  function stopLiveTick() {
+    if (state.liveTickTimer) { clearInterval(state.liveTickTimer); state.liveTickTimer = null; }
+    state.liveRates = null;
+    [E.resDeltaEm, E.resDeltaWo, E.resDeltaOr, E.resDeltaCr, E.resDeltaFi].forEach(el => {
+      if (el) { el.textContent = ''; el.style.color = ''; }
+    });
+  }
+
   // ─── Territory Menu ───────────────────────────────────────────────────────────
   function openMenu(name) {
     state.activeMenu = name;
@@ -1168,6 +1267,8 @@
         const msgs = payload.messages || [];
         E.tickMsgs.innerHTML = msgs.slice(0,8).map(m => `<li style="font-size:11px;color:#f8d9a7;">${m}</li>`).join('');
         if (payload.nextTickInMs) startTickCd(payload.nextTickInMs);
+        // Start live per-second interpolation
+        startLiveTick(payload, state.currentRoom);
         refreshMenuIfOpen();
       });
 

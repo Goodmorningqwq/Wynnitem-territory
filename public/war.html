@@ -94,6 +94,7 @@
     .res-bar-fill { height: 100%; background: #4ec05a; transition: width 0.4s; }
     .res-bar-fill.em { background: #f0c020; }
     .res-val { font-size: 12px; font-weight: bold; color: #ddd; min-width: 72px; text-align: right; }
+    .res-delta { font-size: 10px; font-weight: bold; min-width: 52px; text-align: right; opacity: 0.85; font-family: 'VT323', monospace; }
 
     /* Tower stats (attacker) */
     .tower-stats { background: #140010; border: 1px solid #442222; padding: 8px; border-radius: 3px; }
@@ -336,11 +337,11 @@
     <!-- HQ Resources -->
     <div class="sb-section" id="resourcesPanel" style="display:none;">
       <div class="sb-label">HQ Resources</div>
-      <div class="res-row"><span class="res-icon">🟡</span><span style="flex:1;font-size:11px;">Emeralds</span><span class="res-val" id="resEmeralds">0</span></div>
-      <div class="res-row"><span class="res-icon">🪵</span><span style="flex:1;font-size:11px;">Wood</span><span class="res-val" id="resWood">0</span></div>
-      <div class="res-row"><span class="res-icon">⛏</span><span style="flex:1;font-size:11px;">Ore</span><span class="res-val" id="resOre">0</span></div>
-      <div class="res-row"><span class="res-icon">🌾</span><span style="flex:1;font-size:11px;">Crops</span><span class="res-val" id="resCrops">0</span></div>
-      <div class="res-row"><span class="res-icon">🐟</span><span style="flex:1;font-size:11px;">Fish</span><span class="res-val" id="resFish">0</span></div>
+      <div class="res-row"><span class="res-icon">🟡</span><span style="flex:1;font-size:11px;">Emeralds</span><span class="res-val" id="resEmeralds">0</span><span class="res-delta" id="resDeltaEm"></span></div>
+      <div class="res-row"><span class="res-icon">🪵</span><span style="flex:1;font-size:11px;">Wood</span><span class="res-val" id="resWood">0</span><span class="res-delta" id="resDeltaWo"></span></div>
+      <div class="res-row"><span class="res-icon">⛏</span><span style="flex:1;font-size:11px;">Ore</span><span class="res-val" id="resOre">0</span><span class="res-delta" id="resDeltaOr"></span></div>
+      <div class="res-row"><span class="res-icon">🌾</span><span style="flex:1;font-size:11px;">Crops</span><span class="res-val" id="resCrops">0</span><span class="res-delta" id="resDeltaCr"></span></div>
+      <div class="res-row"><span class="res-icon">🐟</span><span style="flex:1;font-size:11px;">Fish</span><span class="res-val" id="resFish">0</span><span class="res-delta" id="resDeltaFi"></span></div>
       <div id="tickCountdownText" style="font-size:11px; color:#b7ffcf; margin-top:4px;"></div>
       <ul id="tickMessages" style="list-style:disc; padding-left:16px; margin-top:4px; max-height:70px; overflow-y:auto;"></ul>
     </div>
