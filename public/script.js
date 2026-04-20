@@ -42,8 +42,8 @@
     tomeSeeking:        { icon: '📕', label: 'Tome Seeking',        desc: '+tome seeking per level',            resource: 'emeralds', costs: [0,1000,2000,3000],       maxLevel: 3 },
     emeraldSeeking:     { icon: '💎', label: 'Emerald Seeking',     desc: '+emerald seeking per level',         resource: 'ore',      costs: [0,600,1200,1800,2400,3000,3600,4200], maxLevel: 8 },
     // ── Row 3: Economy & Storage bonuses ──
-    largerResourceStorage: { icon: '📦', label: 'Larger Res Storage',  desc: '+resource storage capacity',       resource: 'wood',     costs: [0,500,1000,1500,2000,2500,3000,3500], maxLevel: 8 },
-    largerEmeraldStorage:  { icon: '💰', label: 'Larger Em Storage',   desc: '+emerald storage capacity',        resource: 'crops',    costs: [0,500,1000,1500,2000,2500,3000,3500], maxLevel: 8 },
+    largerResourceStorage: { icon: '📦', label: 'Larger Res Storage',  desc: '+resource storage capacity',  resource: 'emeralds', costs: [0,300,650,1100,1700,2500,3500,4700,6200,8000,10100,12500], maxLevel: 11 },
+    largerEmeraldStorage:  { icon: '💰', label: 'Larger Em Storage',   desc: '+emerald storage capacity',   resource: 'wood',     costs: [0,100,220,400,650,950,1350,1850,2500,3300,4300,5500],     maxLevel: 11 },
     efficientResources:    { icon: '📈', label: 'Efficient Resources', desc: '+10% resource production / lv',    resource: 'emeralds', costs: [0,800,1600,2400,3200,4000],           maxLevel: 6 },
     efficientEmeralds:     { icon: '💰', label: 'Efficient Emeralds',  desc: '+10% emerald production / lv',     resource: 'crops',    costs: [0,800,1600,2400],                     maxLevel: 3 },
     resourceRate:          { icon: '⏱', label: 'Resource Rate',       desc: '+10% faster resource ticks / lv',  resource: 'emeralds', costs: [0,1000,2000,3000],                    maxLevel: 3 },
@@ -834,6 +834,8 @@
   }
 
   /* ── Bonuses (3-row grid with clickable icons) ───────────────────────────── */
+  // Storage bonus keys live in territoryUpgrades (not territoryBonuses) — use storage:apply / upgrade:downgrade
+  const STORAGE_BONUS_KEYS = new Set(['largerResourceStorage', 'largerEmeraldStorage']);
   const BONUS_ROWS = [
     ['strongerMobs','multiAttack','aura','volley'],
     ['gatheringExp','mobExp','mobDamage','pvpDamage','xpSeeking','tomeSeeking','emeraldSeeking'],
@@ -841,13 +843,16 @@
   ];
   function renderTabBonuses(name, room, interactive) {
     const bon = (room.territoryBonuses && room.territoryBonuses[name]) || {};
+    const upg = (room.territoryUpgrades && room.territoryUpgrades[name]) || {};
+    // Storage keys read from upgrades; all others from bonuses
+    const getLv = key => STORAGE_BONUS_KEYS.has(key) ? parseInt(upg[key] || 0) : parseInt(bon[key] || 0);
     let html = '';
     BONUS_ROWS.forEach((row, ri) => {
       html += `<div class="bonus-sec-hdr" style="margin-top:${ri?'8':'0'}px;">${ri===0?'🏰 Tower':ri===1?'⚔ Combat & Seeking':'📈 Economy'} Bonuses</div>`;
       html += '<div class="bonus-grid">';
       row.forEach(key => {
         const def = BONUS_DEFS[key]; if (!def) return;
-        const lv = parseInt(bon[key] || 0); const maxed = lv >= def.maxLevel;
+        const lv = getLv(key); const maxed = lv >= def.maxLevel;
         const drain = def.costs[lv] || 0;
         html += `<div class="bonus-item">
           <div class="b-icon" data-key="${key}" data-lv="${lv}" style="cursor:${interactive&&!maxed?'pointer':'default'};">
@@ -869,12 +874,16 @@
         const def = BONUS_DEFS[key]; if (!def) return;
         const lv = parseInt(icon.dataset.lv || 0);
         if (lv < def.maxLevel) {
-          icon.addEventListener('click', () => socketCtrl.applyBonus(name, key));
+          icon.addEventListener('click', () => {
+            if (STORAGE_BONUS_KEYS.has(key)) socketCtrl.applyStorageUpgrade(name, key);
+            else socketCtrl.applyBonus(name, key);
+          });
         }
         if (lv > 0) {
           icon.addEventListener('contextmenu', e => {
             e.preventDefault();
-            socketCtrl.applyBonusDowngrade(name, key);
+            // upgrade:downgrade handles both tower upgrades and storage categories
+            socketCtrl.applyDowngrade(name, key);
           });
         }
       });
@@ -885,8 +894,6 @@
   function renderTabStorage(name, room, interactive) {
     const isHq  = name === room.hqTerritory;
     const upg   = (room.territoryUpgrades && room.territoryUpgrades[name]) || {};
-    const emSl  = parseInt(upg.largerEmeraldStorage || 0);
-    const rsSl  = parseInt(upg.largerResourceStorage || 0);
     const store = (room.perTerritoryStorage && room.perTerritoryStorage[name]) || {};
     let html = '';
     if (isHq) {
@@ -901,48 +908,14 @@
           <div class="mc-bar-bg"><div class="mc-bar-fill ${fcls}" style="width:${pct}%;"></div></div>
         </div>`;
       });
+      html += `<div class="mc-small" style="margin-top:10px;color:#7a5030;">⚙ Storage capacity is upgraded in the <b>Bonus</b> tab.</div>`;
     } else {
       html += `<div class="passthrough-box">📦 Non-HQ Territory<br>Resources pass through freely toward HQ each tick.</div>`;
       Object.keys(store).filter(k => (store[k] || 0) > 0).forEach(k => {
         html += `<div class="mc-small">${k}: ${fmt(store[k])}</div>`;
       });
     }
-
-    // Larger Emerald Storage (hourly drain)
-    const emMaxed = emSl >= 11;
-    const emDrain = EMERALD_STORAGE_COSTS_WOOD[emSl] || 0;
-    const emNextDrain = emMaxed ? 0 : (EMERALD_STORAGE_COSTS_WOOD[emSl + 1] || 0);
-    html += `<div style="margin-top:10px;"><div class="upg-lv" style="display:flex;justify-content:space-between;align-items:center;">
-      <span class="lv-badge${emMaxed?' maxed':''}" style="font-size:12px;">Em Storage Lv ${emSl}/11</span>
-      ${emSl > 0 ? `<span style="font-size:11px;color:#c87020;">Drain: ${fmt(emDrain)}/hr wood</span>` : ''}
-    </div>
-    ${!emMaxed ? `<div style="font-size:10px;color:#8ab573;text-align:right;margin-bottom:2px;">Next lv drain: ${fmt(emNextDrain)}/hr wood</div>` : '<div style="font-size:10px;color:#3a7020;text-align:right;">MAX</div>'}
-    <div class="seg-bar">${Array.from({length:11},(_,i)=>`<span class="${i<emSl?'on'+(emMaxed?' maxed':''):''}"></span>`).join('')}</div>`;
-    if (interactive && !emMaxed && isHq) html += `<button class="mc-btn upg-btn-em" data-cat="largerEmeraldStorage" style="width:100%;margin-top:4px;font-size:14px;padding:3px 0;">UPGRADE (Wood)</button>`;
-    html += '</div>';
-
-    // Larger Resource Storage (hourly drain)
-    const rsMaxed = rsSl >= 11;
-    const rsDrain = RESOURCE_STORAGE_COSTS_EM[rsSl] || 0;
-    const rsNextDrain = rsMaxed ? 0 : (RESOURCE_STORAGE_COSTS_EM[rsSl + 1] || 0);
-    html += `<div style="margin-top:10px;"><div class="upg-lv" style="display:flex;justify-content:space-between;align-items:center;">
-      <span class="lv-badge${rsMaxed?' maxed':''}" style="font-size:12px;">Res Storage Lv ${rsSl}/11</span>
-      ${rsSl > 0 ? `<span style="font-size:11px;color:#c87020;">Drain: ${fmt(rsDrain)}/hr emeralds</span>` : ''}
-    </div>
-    ${!rsMaxed ? `<div style="font-size:10px;color:#8ab573;text-align:right;margin-bottom:2px;">Next lv drain: ${fmt(rsNextDrain)}/hr emeralds</div>` : '<div style="font-size:10px;color:#3a7020;text-align:right;">MAX</div>'}
-    <div class="seg-bar">${Array.from({length:11},(_,i)=>`<span class="${i<rsSl?'on'+(rsMaxed?' maxed':''):''}"></span>`).join('')}</div>`;
-    if (interactive && !rsMaxed && isHq) html += `<button class="mc-btn upg-btn-rs" data-cat="largerResourceStorage" style="width:100%;margin-top:4px;font-size:14px;padding:3px 0;">UPGRADE (Emeralds)</button>`;
-    html += '</div>';
-
-    if (!isHq && interactive) html += `<button id="makeHqBtn" class="mc-btn blue" style="width:100%;margin-top:12px;font-size:18px;">👑 Set as HQ</button>`;
-
     E.tMenuBody.innerHTML = html;
-    const btnEm = E.tMenuBody.querySelector('.upg-btn-em');
-    if (btnEm) btnEm.addEventListener('click', () => socketCtrl.applyStorageUpgrade(name, 'largerEmeraldStorage'));
-    const btnRs = E.tMenuBody.querySelector('.upg-btn-rs');
-    if (btnRs) btnRs.addEventListener('click', () => socketCtrl.applyStorageUpgrade(name, 'largerResourceStorage'));
-    const hqb = E.tMenuBody.querySelector('#makeHqBtn');
-    if (hqb) hqb.addEventListener('click', () => socketCtrl.setHqTerritory(name));
   }
 
   /* ── Tax & Route ──────────────────────────────────────────────────────────── */
