@@ -781,7 +781,7 @@
       const iconCls = interactive && !maxed ? 'upg-icon-btn' : 'upg-icon-btn' + (maxed ? ' maxed' : '');
       html += `<div class="upg-card${maxed ? ' maxed' : ''}">
         <div class="upg-hdr">
-          <div class="${iconCls}" data-cat="${cat}" title="L-click: upgrade, R-click: downgrade" style="font-size:28px;width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:${maxed?'#c0d4a8':'#e8dcc0'};border:2px solid ${maxed?'#5a9a3a':'#7a6a50'};cursor:${interactive&&!maxed?'pointer':'default'};user-select:none;position:relative;">
+          <div class="${iconCls}" data-cat="${cat}" data-lv="${lv}" title="L-click: upgrade | R-click: downgrade" style="font-size:28px;width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:${maxed?'#c0d4a8':'#e8dcc0'};border:2px solid ${maxed?'#5a9a3a':'#7a6a50'};cursor:${interactive?'pointer':'default'};user-select:none;position:relative;">
             ${UPGRADE_ICON[cat]}
             ${interactive && !maxed ? '<span style="position:absolute;bottom:1px;right:2px;font-size:9px;color:#888;font-family:VT323,monospace;pointer-events:none;">±</span>' : ''}
           </div>
@@ -813,20 +813,25 @@
 
     E.tMenuBody.innerHTML = html;
 
-    // Clickable icon handlers
+    // Clickable icon handlers — left-click upgrades, right-click anywhere on the card downgrades
     if (interactive) {
-      E.tMenuBody.querySelectorAll('.upg-icon-btn').forEach(icon => {
-        const lv = parseInt(icon.dataset.lv || 0);
+      E.tMenuBody.querySelectorAll('.upg-card').forEach(card => {
+        const icon = card.querySelector('.upg-icon-btn');
+        if (!icon) return;
+        const cat = icon.dataset.cat;
+        const lv  = parseInt(icon.dataset.lv || 0);
+        // Left-click on the icon square: upgrade
         if (!icon.classList.contains('maxed')) {
           icon.addEventListener('click', function (e) {
             e.preventDefault();
-            socketCtrl.applyUpgrade(name, this.dataset.cat);
+            socketCtrl.applyUpgrade(name, cat);
           });
         }
+        // Right-click anywhere on the card: downgrade (if lv > 0)
         if (lv > 0) {
-          icon.addEventListener('contextmenu', function (e) {
+          card.addEventListener('contextmenu', function (e) {
             e.preventDefault();
-            socketCtrl.applyDowngrade(name, this.dataset.cat);
+            socketCtrl.applyDowngrade(name, cat);
           });
         }
       });
