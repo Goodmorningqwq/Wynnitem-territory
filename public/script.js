@@ -770,29 +770,34 @@
     const routes = t ? t.tradeRoutes : [];
     const conns  = routes.filter(r => r !== name && selSt.has(r)).length;
     const cats = ['damage', 'attackSpeed', 'health', 'defense'];
+    const inactiveCats = (room.inactiveUpgradesSnapshot && room.inactiveUpgradesSnapshot[name]) || [];
 
     let html = '<div class="upg-grid">';
     cats.forEach(cat => {
       const lv = parseInt(upg[cat] || 0);
       const maxed = lv >= 11;
+      const defective = inactiveCats.includes(cat);
       const drain = UPGRADE_COSTS_PER_LEVEL[lv] || 0;
       const nextD = maxed ? 0 : (UPGRADE_COSTS_PER_LEVEL[lv + 1] || 0);
-      const bars  = Array.from({length: 11}, (_, i) => `<span class="${i < lv ? 'on' + (maxed ? ' maxed' : '') : ''}"></span>`).join('');
+      const bars  = Array.from({length: 11}, (_, i) => `<span class="${i < lv ? 'on' + (maxed ? ' maxed' : defective ? ' defective' : '') : ''}"></span>`).join('');
       const iconCls = interactive && !maxed ? 'upg-icon-btn' : 'upg-icon-btn' + (maxed ? ' maxed' : '');
-      html += `<div class="upg-card${maxed ? ' maxed' : ''}">
+      const cardBorder = defective ? '2px solid #c43030' : maxed ? '2px solid #5a9a3a' : '2px solid #7a6a50';
+      html += `<div class="upg-card${maxed ? ' maxed' : defective ? ' defective' : ''}" style="border:${cardBorder};">
         <div class="upg-hdr">
-          <div class="${iconCls}" data-cat="${cat}" data-lv="${lv}" title="L-click: upgrade | R-click: downgrade" style="font-size:28px;width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:${maxed?'#c0d4a8':'#e8dcc0'};border:2px solid ${maxed?'#5a9a3a':'#7a6a50'};cursor:${interactive?'pointer':'default'};user-select:none;position:relative;">
+          <div class="${iconCls}" data-cat="${cat}" data-lv="${lv}" title="L-click: upgrade | R-click: downgrade" style="font-size:28px;width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:${maxed?'#c0d4a8':defective?'#5a1a1a':'#e8dcc0'};border:2px solid ${maxed?'#5a9a3a':defective?'#c43030':'#7a6a50'};cursor:${interactive?'pointer':'default'};user-select:none;position:relative;opacity:${defective?0.7:1};">
             ${UPGRADE_ICON[cat]}
-            ${interactive && !maxed ? '<span style="position:absolute;bottom:1px;right:2px;font-size:9px;color:#888;font-family:VT323,monospace;pointer-events:none;">±</span>' : ''}
+            ${defective ? '<span style="position:absolute;top:1px;left:2px;font-size:9px;color:#ff6060;font-family:VT323,monospace;pointer-events:none;">✘</span>' : interactive && !maxed ? '<span style="position:absolute;bottom:1px;right:2px;font-size:9px;color:#888;font-family:VT323,monospace;pointer-events:none;">±</span>' : ''}
           </div>
           <div style="flex:1;">
             <div class="upg-name">${UPGRADE_LABEL[cat]}</div>
             <div class="upg-res">${UPGRADE_RESOURCE[cat]}</div>
           </div>
-          <span class="lv-badge${maxed?' maxed':''}" style="font-size:20px;">${lv}/11</span>
+          <span class="lv-badge${maxed?' maxed':''}" style="font-size:20px;${defective?'color:#ff6060;':''}">` +
+            (defective ? `<span style="font-size:10px;color:#ff6060;">INACTIVE</span> ` : '') +
+          `${lv}/11</span>
         </div>
         <div class="seg-bar" style="margin:4px 0;">${bars}</div>
-        <div class="upg-cost">Drain: ${drain ? fmt(drain) + '/hr' : '—'}${!maxed ? ' → Next: ' + fmt(nextD) + '/hr' : ''}</div>
+        <div class="upg-cost" style="${defective?'color:#ff6060;':''}">Drain: ${drain ? fmt(drain) + '/hr' : '—'}${!maxed ? ' → Next: ' + fmt(nextD) + '/hr' : ''}</div>
       </div>`;
     });
     html += '</div>';
