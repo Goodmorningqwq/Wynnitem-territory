@@ -816,16 +816,19 @@
     // Clickable icon handlers
     if (interactive) {
       E.tMenuBody.querySelectorAll('.upg-icon-btn').forEach(icon => {
-        if (icon.classList.contains('maxed')) return;
-        icon.addEventListener('click', function (e) {
-          e.preventDefault();
-          socketCtrl.applyUpgrade(name, this.dataset.cat);
-        });
-        icon.addEventListener('contextmenu', function (e) {
-          e.preventDefault();
-          // Downgrade: we don't have a backend endpoint for this, so it's visual only for now
-          // TODO: socketCtrl.applyDowngrade(name, this.dataset.cat);
-        });
+        const lv = parseInt(icon.dataset.lv || 0);
+        if (!icon.classList.contains('maxed')) {
+          icon.addEventListener('click', function (e) {
+            e.preventDefault();
+            socketCtrl.applyUpgrade(name, this.dataset.cat);
+          });
+        }
+        if (lv > 0) {
+          icon.addEventListener('contextmenu', function (e) {
+            e.preventDefault();
+            socketCtrl.applyDowngrade(name, this.dataset.cat);
+          });
+        }
       });
     }
   }
@@ -847,7 +850,7 @@
         const lv = parseInt(bon[key] || 0); const maxed = lv >= def.maxLevel;
         const drain = def.costs[lv] || 0;
         html += `<div class="bonus-item">
-          <div class="b-icon" data-key="${key}" style="cursor:${interactive&&!maxed?'pointer':'default'};">
+          <div class="b-icon" data-key="${key}" data-lv="${lv}" style="cursor:${interactive&&!maxed?'pointer':'default'};">
             ${def.icon}
             ${interactive && !maxed ? '<span class="b-hint">±</span>' : ''}
           </div>
@@ -864,13 +867,16 @@
       E.tMenuBody.querySelectorAll('.b-icon').forEach(icon => {
         const key = icon.dataset.key;
         const def = BONUS_DEFS[key]; if (!def) return;
-        const lv = parseInt(bon[key] || 0);
-        if (lv >= def.maxLevel) return;
-        icon.addEventListener('click', () => socketCtrl.applyBonus(name, key));
-        icon.addEventListener('contextmenu', e => {
-          e.preventDefault();
-          // TODO: downgrade not yet supported by backend
-        });
+        const lv = parseInt(icon.dataset.lv || 0);
+        if (lv < def.maxLevel) {
+          icon.addEventListener('click', () => socketCtrl.applyBonus(name, key));
+        }
+        if (lv > 0) {
+          icon.addEventListener('contextmenu', e => {
+            e.preventDefault();
+            socketCtrl.applyBonusDowngrade(name, key);
+          });
+        }
       });
     }
   }
@@ -902,24 +908,28 @@
       });
     }
 
-    // Larger Emerald Storage
+    // Larger Emerald Storage (hourly drain)
     const emMaxed = emSl >= 11;
-    const emCost = emMaxed ? 0 : EMERALD_STORAGE_COSTS_WOOD[emSl + 1];
+    const emDrain = EMERALD_STORAGE_COSTS_WOOD[emSl] || 0;
+    const emNextDrain = emMaxed ? 0 : (EMERALD_STORAGE_COSTS_WOOD[emSl + 1] || 0);
     html += `<div style="margin-top:10px;"><div class="upg-lv" style="display:flex;justify-content:space-between;align-items:center;">
       <span class="lv-badge${emMaxed?' maxed':''}" style="font-size:12px;">Em Storage Lv ${emSl}/11</span>
-      ${!emMaxed ? `<span style="font-size:11px;color:#8ab573;">Next: ${fmt(emCost)} wood</span>` : '<span style="font-size:11px;color:#3a7020;">MAX</span>'}
+      ${emSl > 0 ? `<span style="font-size:11px;color:#c87020;">Drain: ${fmt(emDrain)}/hr wood</span>` : ''}
     </div>
+    ${!emMaxed ? `<div style="font-size:10px;color:#8ab573;text-align:right;margin-bottom:2px;">Next lv drain: ${fmt(emNextDrain)}/hr wood</div>` : '<div style="font-size:10px;color:#3a7020;text-align:right;">MAX</div>'}
     <div class="seg-bar">${Array.from({length:11},(_,i)=>`<span class="${i<emSl?'on'+(emMaxed?' maxed':''):''}"></span>`).join('')}</div>`;
     if (interactive && !emMaxed && isHq) html += `<button class="mc-btn upg-btn-em" data-cat="largerEmeraldStorage" style="width:100%;margin-top:4px;font-size:14px;padding:3px 0;">UPGRADE (Wood)</button>`;
     html += '</div>';
 
-    // Larger Resource Storage
+    // Larger Resource Storage (hourly drain)
     const rsMaxed = rsSl >= 11;
-    const rsCost = rsMaxed ? 0 : RESOURCE_STORAGE_COSTS_EM[rsSl + 1];
+    const rsDrain = RESOURCE_STORAGE_COSTS_EM[rsSl] || 0;
+    const rsNextDrain = rsMaxed ? 0 : (RESOURCE_STORAGE_COSTS_EM[rsSl + 1] || 0);
     html += `<div style="margin-top:10px;"><div class="upg-lv" style="display:flex;justify-content:space-between;align-items:center;">
       <span class="lv-badge${rsMaxed?' maxed':''}" style="font-size:12px;">Res Storage Lv ${rsSl}/11</span>
-      ${!rsMaxed ? `<span style="font-size:11px;color:#8ab573;">Next: ${fmt(rsCost)} emeralds</span>` : '<span style="font-size:11px;color:#3a7020;">MAX</span>'}
+      ${rsSl > 0 ? `<span style="font-size:11px;color:#c87020;">Drain: ${fmt(rsDrain)}/hr emeralds</span>` : ''}
     </div>
+    ${!rsMaxed ? `<div style="font-size:10px;color:#8ab573;text-align:right;margin-bottom:2px;">Next lv drain: ${fmt(rsNextDrain)}/hr emeralds</div>` : '<div style="font-size:10px;color:#3a7020;text-align:right;">MAX</div>'}
     <div class="seg-bar">${Array.from({length:11},(_,i)=>`<span class="${i<rsSl?'on'+(rsMaxed?' maxed':''):''}"></span>`).join('')}</div>`;
     if (interactive && !rsMaxed && isHq) html += `<button class="mc-btn upg-btn-rs" data-cat="largerResourceStorage" style="width:100%;margin-top:4px;font-size:14px;padding:3px 0;">UPGRADE (Emeralds)</button>`;
     html += '</div>';
@@ -1339,6 +1349,20 @@
       if (!state.socket) return;
       state.socket.emit('storage:apply', { territoryName: terrName, category }, res => {
         if (res && !res.ok) alert(res.error || 'Storage upgrade failed.');
+      });
+    },
+
+    applyDowngrade(terrName, category) {
+      if (!state.socket) return;
+      state.socket.emit('upgrade:downgrade', { territoryName: terrName, category }, res => {
+        if (res && !res.ok) alert(res.error || 'Downgrade failed.');
+      });
+    },
+
+    applyBonusDowngrade(terrName, bonusKey) {
+      if (!state.socket) return;
+      state.socket.emit('bonus:downgrade', { territoryName: terrName, bonusKey }, res => {
+        if (res && !res.ok) alert(res.error || 'Downgrade failed.');
       });
     },
 
