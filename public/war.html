@@ -167,6 +167,40 @@
     .stor-card { grid-column: span 2; background: #d4c8a8; border: 2px solid #9a8558; padding: 8px; }
     .hq-sel-box { margin-top: 10px; background: #b8a870; border: 2px solid #9a8558; padding: 8px; }
 
+    /* ── Clickable Upgrade Icon ────────────────────────────────────────────── */
+    .upg-icon-btn {
+      font-size: 28px; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;
+      background: #e8dcc0; border: 2px solid #7a6a50; cursor: pointer; user-select: none;
+      position: relative; transition: background 0.1s;
+    }
+    .upg-icon-btn:hover { background: #d8c8a0; }
+    .upg-icon-btn:active { background: #c8b890; }
+    .upg-icon-btn .upg-hint {
+      position: absolute; bottom: 1px; right: 2px; font-size: 9px; color: #888;
+      font-family: 'VT323', monospace; pointer-events: none;
+    }
+    .upg-icon-btn.maxed { background: #c0d4a8; border-color: #5a9a3a; cursor: default; }
+
+    /* ── Bonus Grid ────────────────────────────────────────────────────────── */
+    .bonus-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; }
+    .bonus-item {
+      background: #d4c8a8; border: 2px solid #9a8558; padding: 6px; display: flex; align-items: center; gap: 6px;
+    }
+    .bonus-item .b-icon {
+      font-size: 22px; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+      background: #e8dcc0; border: 2px solid #7a6a50; cursor: pointer; user-select: none; position: relative;
+      flex-shrink: 0;
+    }
+    .bonus-item .b-icon:hover { background: #d8c8a0; }
+    .bonus-item .b-icon:active { background: #c8b890; }
+    .bonus-item .b-icon .b-hint {
+      position: absolute; bottom: 0; right: 1px; font-size: 8px; color: #888;
+      font-family: 'VT323', monospace; pointer-events: none;
+    }
+    .bonus-item .b-info { flex: 1; min-width: 0; }
+    .bonus-item .b-name { font-family: 'VT323', monospace; font-size: 13px; color: #2e1a08; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bonus-item .b-lv { font-family: 'VT323', monospace; font-size: 12px; color: #5a3820; }
+
     /* ── Bonus Cards ───────────────────────────────────────────────────────── */
     .bonus-list { display: flex; flex-direction: column; gap: 6px; }
     .bonus-card { background: #d4c8a8; border: 2px solid #9a8558; padding: 8px; display: flex; align-items: center; gap: 10px; }
@@ -348,11 +382,13 @@
         <button id="tMenuCloseBtn" class="mc-btn" style="margin-left:auto; font-size:16px;">✕</button>
       </div>
       <div class="tmenu-tabs">
-        <div class="tmenu-tab active" data-tab="upgrades">⚔ Upgrades</div>
-        <div class="tmenu-tab" data-tab="bonuses">✨ Bonuses</div>
-        <div class="tmenu-tab" data-tab="storage">📦 Storage</div>
-        <div class="tmenu-tab" data-tab="tax">💰 Tax &amp; Route</div>
-        <div class="tmenu-tab" data-tab="info">📋 Info</div>
+        <div class="tmenu-tab active" data-tab="upgrades">⚔ Guild Tower</div>
+        <div class="tmenu-tab" data-tab="bonuses">✨ Bonus</div>
+        <div class="tmenu-tab" data-tab="costOutput">📊 Cost & Output</div>
+        <div class="tmenu-tab" data-tab="storage">📦 Resources</div>
+        <div class="tmenu-tab" data-tab="tradeRoute">🛤 Trade Route</div>
+        <div class="tmenu-tab" data-tab="tax">💰 Tax</div>
+        <div class="tmenu-tab" data-tab="setHq">👑 Set HQ</div>
       </div>
       <div class="tmenu-body" id="tMenuBody"></div>
     </div>

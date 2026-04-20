@@ -19,17 +19,35 @@
   const SESSION_KEY_PREFIX = 'ecoWarRoomSessionV2';
 
   const UPGRADE_COSTS_PER_LEVEL = [0, 100, 300, 600, 1200, 2400, 4800, 8400, 12000, 15600, 19200, 22800];
-  const UPGRADE_RESOURCE = { damage: 'ore', attackSpeed: 'crops', health: 'wood', defense: 'fish', storage: 'wood' };
-  const UPGRADE_ICON     = { damage: '⚔', attackSpeed: '⚡', health: '❤', defense: '🛡', storage: '📦' };
-  const UPGRADE_LABEL    = { damage: 'Damage', attackSpeed: 'Atk Speed', health: 'Health', defense: 'Defense', storage: 'Storage' };
+  // Tower upgrades — hourly drain, paid per tick
+  const UPGRADE_RESOURCE = { damage: 'ore', attackSpeed: 'crops', health: 'wood', defense: 'fish' };
+  const UPGRADE_ICON     = { damage: '⚔', attackSpeed: '⚡', health: '❤', defense: '🛡' };
+  const UPGRADE_LABEL    = { damage: 'Damage', attackSpeed: 'Atk Speed', health: 'Health', defense: 'Defense' };
+  // Storage upgrades — one-time cost, separate for emeralds vs resources
+  const EMERALD_STORAGE_COSTS_WOOD = [0, 100, 220, 400, 650, 950, 1350, 1850, 2500, 3300, 4300, 5500];
+  const RESOURCE_STORAGE_COSTS_EM  = [0, 300, 650, 1100, 1700, 2500, 3500, 4700, 6200, 8000, 10100, 12500];
 
   const BONUS_DEFS = {
-    strongerMobs:       { icon: '💀', label: 'Stronger Mobs',    desc: 'Mob damage bonus',           resource: 'wood',     costs: [0,1200,2400,4800], maxLevel: 3 },
-    multiAttack:        { icon: '⚔⚔',label: 'Multi-Attack',      desc: 'Tower hits 2 targets',        resource: 'fish',     costs: [0,3200],           maxLevel: 1 },
-    aura:               { icon: '🔥', label: 'Aura',              desc: 'True dmg — inner circle',     resource: 'crops',    costs: [0,2000],           maxLevel: 1 },
-    volley:             { icon: '💥', label: 'Volley',            desc: 'True dmg — outer circle',     resource: 'ore',      costs: [0,2000],           maxLevel: 1 },
-    resourceProduction: { icon: '📈', label: 'Res. Production',   desc: '+10% resources per level',    resource: 'ore',      costs: [0,800,1600,3200],  maxLevel: 3 },
-    emeraldProduction:  { icon: '💎', label: 'Em. Production',    desc: '+10% emeralds per level',     resource: 'emeralds', costs: [0,1000,2000,4000], maxLevel: 3 }
+    // ── Row 1: Tower bonuses ──
+    strongerMobs:       { icon: '💀', label: 'Stronger Minions',     desc: 'Mob damage bonus (+level)',          resource: 'wood',     costs: [0,1200,2400,4800],      maxLevel: 3 },
+    multiAttack:        { icon: '⚔⚔', label: 'Tower Multi Target',  desc: 'Tower hits 2 targets',               resource: 'fish',     costs: [0,3200],                 maxLevel: 1 },
+    aura:               { icon: '🔥', label: 'Tower Aura',          desc: 'True dmg — inner circle',            resource: 'crops',    costs: [0,2000,4000,8000],       maxLevel: 3 },
+    volley:             { icon: '💥', label: 'Tower Volley',        desc: 'True dmg — outer circle',            resource: 'ore',      costs: [0,2000,4000,8000],       maxLevel: 3 },
+    // ── Row 2: Experience & Seeking bonuses ──
+    gatheringExp:       { icon: '🌿', label: 'Gathering XP',        desc: '+gathering experience per level',    resource: 'crops',    costs: [0,400,800,1200,1600,2000,2400,2800], maxLevel: 8 },
+    mobExp:             { icon: '🧟', label: 'Mob XP',              desc: '+mob experience per level',          resource: 'ore',      costs: [0,400,800,1200,1600,2000,2400,2800], maxLevel: 8 },
+    mobDamage:          { icon: '🗡', label: 'Mob Damage',          desc: '+mob damage per level',              resource: 'wood',     costs: [0,400,800,1200,1600,2000,2400,2800], maxLevel: 8 },
+    pvpDamage:          { icon: '⚡', label: 'PvP Damage',          desc: '+PvP damage per level',              resource: 'fish',     costs: [0,400,800,1200,1600,2000,2400,2800], maxLevel: 8 },
+    xpSeeking:          { icon: '📘', label: 'XP Seeking',          desc: '+XP seeking per level',              resource: 'emeralds', costs: [0,600,1200,1800,2400,3000,3600,4200], maxLevel: 8 },
+    tomeSeeking:        { icon: '📕', label: 'Tome Seeking',        desc: '+tome seeking per level',            resource: 'emeralds', costs: [0,1000,2000,3000],       maxLevel: 3 },
+    emeraldSeeking:     { icon: '💎', label: 'Emerald Seeking',     desc: '+emerald seeking per level',         resource: 'ore',      costs: [0,600,1200,1800,2400,3000,3600,4200], maxLevel: 8 },
+    // ── Row 3: Economy & Storage bonuses ──
+    largerResourceStorage: { icon: '📦', label: 'Larger Res Storage',  desc: '+resource storage capacity',       resource: 'wood',     costs: [0,500,1000,1500,2000,2500,3000,3500], maxLevel: 8 },
+    largerEmeraldStorage:  { icon: '💰', label: 'Larger Em Storage',   desc: '+emerald storage capacity',        resource: 'crops',    costs: [0,500,1000,1500,2000,2500,3000,3500], maxLevel: 8 },
+    efficientResources:    { icon: '📈', label: 'Efficient Resources', desc: '+10% resource production / lv',    resource: 'emeralds', costs: [0,800,1600,2400,3200,4000],           maxLevel: 6 },
+    efficientEmeralds:     { icon: '💰', label: 'Efficient Emeralds',  desc: '+10% emerald production / lv',     resource: 'crops',    costs: [0,800,1600,2400],                     maxLevel: 3 },
+    resourceRate:          { icon: '⏱', label: 'Resource Rate',       desc: '+10% faster resource ticks / lv',  resource: 'emeralds', costs: [0,1000,2000,3000],                    maxLevel: 3 },
+    emeraldRate:           { icon: '⏱', label: 'Emerald Rate',        desc: '+10% faster emerald ticks / lv',   resource: 'ore',      costs: [0,1000,2000,3000],                    maxLevel: 3 },
   };
 
   const WAR_TYPES = {
@@ -40,6 +58,10 @@
 
   const HQ_BASE_STORE  = { emeralds: 5000,   resource: 1500   };
   const HQ_MAX_STORE   = { emeralds: 400000, resource: 120000 };
+  // Treasury tier thresholds (ms) and bonus values — tiered system matching live game
+  const TREASURY_TIER_MS     = [3600000, 86400000, 432000000]; // 1hr, 24hr, 5 days
+  const TREASURY_TIER_BONUS  = [0.10, 0.20, 0.25];
+  const TREASURY_TIER_LABELS = ['1+ hour: +10%', '24+ hours: +20%', '5+ days: +25%'];
 
   // ─── State ──────────────────────────────────────────────────────────────────
   const state = {
@@ -231,11 +253,20 @@
   function territoryCenterS(name)  { const g = state.geo; return territoryCenterLatLng(name, g.imgW, g.imgH); }
 
   // ─── HQ Capacity ─────────────────────────────────────────────────────────────
-  function hqCap(storLevel, resKey) {
-    const lv = clamp(storLevel, 0, 11);
-    if (resKey === 'emeralds') return Math.floor(HQ_BASE_STORE.emeralds + (lv / 11) * (HQ_MAX_STORE.emeralds - HQ_BASE_STORE.emeralds));
+  function hqEmeraldCap(emStorLv) {
+    const lv = clamp(emStorLv || 0, 0, 11);
+    return Math.floor(HQ_BASE_STORE.emeralds + (lv / 11) * (HQ_MAX_STORE.emeralds - HQ_BASE_STORE.emeralds));
+  }
+  function hqResourceCap(resStorLv) {
+    const lv = clamp(resStorLv || 0, 0, 11);
     return Math.floor(HQ_BASE_STORE.resource + (lv / 11) * (HQ_MAX_STORE.resource - HQ_BASE_STORE.resource));
   }
+  // Convenience: get the effective cap for any resource key given upgrade levels object
+  function hqCap(upgrades, resKey) {
+    if (resKey === 'emeralds') return hqEmeraldCap((upgrades && upgrades.largerEmeraldStorage) || 0);
+    return hqResourceCap((upgrades && upgrades.largerResourceStorage) || 0);
+  }
+
 
   // ─── Territory Styling ───────────────────────────────────────────────────────
   function styleFor(name) {
@@ -575,16 +606,18 @@
     const isThisAttack     = attackInProgress && room.currentAttack.territory === name;
     const isHq     = name === room.hqTerritory;
 
-    // Estimate stats locally for display
+      // Estimate stats locally for display
     const upg     = room.territoryUpgrades && room.territoryUpgrades[name] ? room.territoryUpgrades[name] : {};
     const selSet  = new Set(defTerr);
     const conns   = tradeRoutes.filter(r => r !== name && selSet.has(r)).length;
     const wt      = WAR_TYPES[state.selectedWarType] || WAR_TYPES.normal;
     const hlv     = parseInt(upg.health || 0);
     const dlv     = parseInt(upg.defense || 0);
+    const dmlv    = parseInt(upg.damage || 0);
     const towerHP = Math.floor(1000000 * (1 + hlv * 0.25) * (1 + 0.3 * conns));
     const defRed  = Math.min(0.80, dlv * 0.05);
     const ehp     = Math.floor(towerHP / (1 - defRed));
+    // The combat outcome formula in index.html isn't fully accurate, but battle time relies on standard attacker DPS vs tower EHP.
     const battleSec = Math.ceil(ehp / wt.dps) + 30;
     const adjCap = tradeRoutes.some(r => capSet.has(r));
     const queueNote = adjCap ? 'hops+1 min (adjacent)' : '2 min base (no adjacent capture)';
@@ -611,21 +644,46 @@
         <div class="mc-title" style="margin-bottom:8px;">${name}${isHq?' 👑':''}</div>
         <div style="font-family:VT323,monospace;font-size:16px;color:#cc8844;">⚠ Another attack is already in progress.<br>Wait for it to finish.</div>`;
     } else {
+      // Check if allowed to attack (fixes UI showing clickable buttons when technically forbidden)
+      let canStart = true;
+      let startErr = '';
+      if (room.status !== 'playing') { canStart = false; startErr = 'Playing phase only'; }
+      if (state.role !== 'attacker') { canStart = false; startErr = 'Attacker only'; }
+
+      const baseDps = Math.floor(500000 * (1 + dmlv * 0.25) * (1 + 0.3 * conns));
+      
+      const btnHtml = canStart 
+        ? `<button id="confirmAttackBtn" class="mc-btn red" style="width:100%;font-size:22px;padding:9px 0;">⚔ START ATTACK</button>`
+        : `<button disabled class="mc-btn disabled" style="width:100%;font-size:22px;padding:9px 0;opacity:0.6;cursor:not-allowed;">⛔ ${startErr}</button>`;
+
       body.innerHTML = `
         <div class="mc-title" style="margin-bottom:8px;">⚔ Attack: ${name}${isHq?' 👑':''}</div>
         <div style="font-family:VT323,monospace;font-size:15px;color:#3d2c18;line-height:1.7;margin-bottom:10px;">
-          <div>Tower HP: <b>${fmt(towerHP)}</b> &nbsp;|&nbsp; EHP: <b>${fmt(ehp)}</b></div>
+          <div>EHP: <b>${fmt(ehp)}</b> &nbsp;|&nbsp; DPS: <b style="color:#dd6655;">${fmt(baseDps)}</b></div>
           <div>Connections: ${conns} &nbsp;|&nbsp; Health Lv: ${hlv} &nbsp;|&nbsp; Def Lv: ${dlv}</div>
           <div style="margin-top:4px;">War team: <b style="color:${wt.color};">${wt.icon} ${wt.label}</b> (${fmt(wt.dps)} DPS)</div>
           <div style="color:#5a3820;">⏳ Queue: ~${queueNote}</div>
           <div style="color:#5a3820;">⚔ Battle: ~${fmtTime(battleSec)}</div>
           ${isHq ? '<div style="color:#cc2222;font-size:17px;margin-top:4px;">☠ HQ — capturing this ends the war!</div>' : ''}
         </div>
-        <button id="confirmAttackBtn" class="mc-btn red" style="width:100%;font-size:22px;padding:9px 0;">⚔ START ATTACK</button>`;
+        ${btnHtml}`;
+
       const btn = body.querySelector('#confirmAttackBtn');
       if (btn) btn.addEventListener('click', () => {
-        socketCtrl.startAttack(name);
-        overlay.style.display = 'none';
+        if (!state.socket) return;
+        btn.textContent = '⏳ Starting...';
+        btn.disabled = true;
+        btn.style.opacity = '0.7';
+        state.socket.emit('attacker:attack', { territoryName: name }, res => {
+          if (res && res.ok) {
+            overlay.style.display = 'none';
+          } else {
+            btn.textContent = '⚔ START ATTACK';
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            alert('Attack failed: ' + (res ? res.error : '?'));
+          }
+        });
       });
     }
     overlay.style.display = 'flex';
@@ -694,17 +752,25 @@
     const isDefender  = state.role === 'defender';
     const interactive = (room.status === 'prep' || room.status === 'playing') && isDefender;
     const tab = state.activeTab;
-    if      (tab === 'upgrades') renderTabUpgrades(name, room, interactive);
-    else if (tab === 'bonuses')  renderTabBonuses(name, room, interactive);
-    else if (tab === 'storage')  renderTabStorage(name, room, interactive);
-    else if (tab === 'tax')      renderTabTax(name, room, interactive);
-    else if (tab === 'info')     renderTabInfo(name, room);
+    if      (tab === 'upgrades')    renderTabUpgrades(name, room, interactive);
+    else if (tab === 'bonuses')     renderTabBonuses(name, room, interactive);
+    else if (tab === 'costOutput')  renderTabCostOutput(name, room, interactive);
+    else if (tab === 'storage')     renderTabStorage(name, room, interactive);
+    else if (tab === 'tradeRoute')  renderTabTradeRoute(name, room, interactive);
+    else if (tab === 'tax')         renderTabTax(name, room, interactive);
+    else if (tab === 'setHq')       renderTabSetHq(name, room, interactive);
   }
 
-  /* ── Upgrades ─────────────────────────────────────────────────────────────── */
+  /* ── Guild Tower (Upgrades) ─────────────────────────────────────────────── */
   function renderTabUpgrades(name, room, interactive) {
     const upg = (room.territoryUpgrades && room.territoryUpgrades[name]) || {};
+    const t    = state.territoryByName.get(name);
+    const sel  = room.selectedTerritories || [];
+    const selSt = new Set(sel);
+    const routes = t ? t.tradeRoutes : [];
+    const conns  = routes.filter(r => r !== name && selSt.has(r)).length;
     const cats = ['damage', 'attackSpeed', 'health', 'defense'];
+
     let html = '<div class="upg-grid">';
     cats.forEach(cat => {
       const lv = parseInt(upg[cat] || 0);
@@ -712,92 +778,116 @@
       const drain = UPGRADE_COSTS_PER_LEVEL[lv] || 0;
       const nextD = maxed ? 0 : (UPGRADE_COSTS_PER_LEVEL[lv + 1] || 0);
       const bars  = Array.from({length: 11}, (_, i) => `<span class="${i < lv ? 'on' + (maxed ? ' maxed' : '') : ''}"></span>`).join('');
+      const iconCls = interactive && !maxed ? 'upg-icon-btn' : 'upg-icon-btn' + (maxed ? ' maxed' : '');
       html += `<div class="upg-card${maxed ? ' maxed' : ''}">
-        <div class="upg-hdr"><span class="upg-icon">${UPGRADE_ICON[cat]}</span><span class="upg-name">${UPGRADE_LABEL[cat]}</span><span class="upg-res">${UPGRADE_RESOURCE[cat]}</span></div>
-        <div class="upg-lv"><span class="lv-badge${maxed?' maxed':''}">Lv${lv}</span><div class="seg-bar" style="flex:1;">${bars}</div></div>
-        <div class="upg-cost">Drain: ${drain ? fmt(drain) + '/hr' : '—'}</div>
-        ${!maxed ? `<div class="upg-cost" style="color:#2a5020;">Next: ${fmt(nextD)}/hr</div>` : '<div class="upg-cost" style="color:#3a7020;">MAX ★</div>'}
-        ${interactive && !maxed ? `<button class="mc-btn green upg-btn" data-cat="${cat}" style="width:100%;margin-top:4px;font-size:16px;">UPGRADE</button>` : ''}
+        <div class="upg-hdr">
+          <div class="${iconCls}" data-cat="${cat}" title="L-click: upgrade, R-click: downgrade" style="font-size:28px;width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:${maxed?'#c0d4a8':'#e8dcc0'};border:2px solid ${maxed?'#5a9a3a':'#7a6a50'};cursor:${interactive&&!maxed?'pointer':'default'};user-select:none;position:relative;">
+            ${UPGRADE_ICON[cat]}
+            ${interactive && !maxed ? '<span style="position:absolute;bottom:1px;right:2px;font-size:9px;color:#888;font-family:VT323,monospace;pointer-events:none;">±</span>' : ''}
+          </div>
+          <div style="flex:1;">
+            <div class="upg-name">${UPGRADE_LABEL[cat]}</div>
+            <div class="upg-res">${UPGRADE_RESOURCE[cat]}</div>
+          </div>
+          <span class="lv-badge${maxed?' maxed':''}" style="font-size:20px;">${lv}/11</span>
+        </div>
+        <div class="seg-bar" style="margin:4px 0;">${bars}</div>
+        <div class="upg-cost">Drain: ${drain ? fmt(drain) + '/hr' : '—'}${!maxed ? ' → Next: ' + fmt(nextD) + '/hr' : ''}</div>
       </div>`;
     });
-    // Storage (full width)
-    const sl = parseInt(upg.storage || 0); const smaxed = sl >= 11;
-    const sbars = Array.from({length: 11}, (_, i) => `<span class="${i < sl ? 'on' + (smaxed ? ' maxed' : '') : ''}"></span>`).join('');
-    const isHq  = name === room.hqTerritory;
-    html += `<div class="stor-card">
-      <div class="upg-hdr"><span class="upg-icon">📦</span><span class="upg-name">Storage</span></div>
-      <div class="upg-lv"><span class="lv-badge${smaxed?' maxed':''}">Lv${sl}/11</span><div class="seg-bar" style="flex:1;">${sbars}</div></div>
-      <div class="upg-cost">${isHq ? 'HQ cap: ' + fmt(hqCap(sl,'resource')) + ' res / ' + fmt(hqCap(sl,'emeralds')) + ' em' : 'Non-HQ: unlimited pass-through'}</div>
-      ${interactive && !smaxed ? `<button class="mc-btn upg-btn" data-cat="storage" style="width:100%;margin-top:4px;font-size:16px;">UPGRADE STORAGE</button>` : ''}
-    </div></div>`;
-    // HQ selector
-    if (interactive) {
-      const sel = (room.selectedTerritories || []).map(t =>
-        `<option value="${t}"${t === room.hqTerritory ? ' selected' : ''}>${t}</option>`).join('');
-      html += `<div class="hq-sel-box"><div class="mc-label" style="margin-bottom:6px;">Set Guild HQ Territory</div>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <select id="hqSelDd" style="flex:1;font-family:VT323,monospace;font-size:16px;background:#2d2418;color:#f0e0a0;border:2px solid #373737;padding:3px 6px;">${sel}</select>
-          <button id="setHqBtn" class="mc-btn green" style="font-size:16px;">Set HQ</button>
-        </div></div>`;
-    }
+    html += '</div>';
+
+    // Nearby territories & tower stats
+    const hlv = parseInt(upg.health || 0); const dlv = parseInt(upg.defense || 0); const dmlv = parseInt(upg.damage || 0);
+    const baseHp = Math.floor(1000000 * (1 + hlv * 0.25) * (1 + 0.3 * conns));
+    const defRed = Math.min(0.80, dlv * 0.05);
+    const ehp = Math.floor(baseHp / (1 - defRed));
+    const baseDps = Math.floor(500000 * (1 + dmlv * 0.25) * (1 + 0.3 * conns));
+    html += `<div style="margin-top:10px;background:#b8a870;border:2px solid #9a8558;padding:8px;">
+      <div class="mc-label" style="margin-bottom:4px;">🏰 Tower Stats</div>
+      <div class="info-row"><span class="info-key">🔗 Nearby Territories</span><span class="info-val">${conns}</span></div>
+      <div class="info-row"><span class="info-key">🛡 Tower HP</span><span class="info-val">${fmt(baseHp)}</span></div>
+      <div class="info-row"><span class="info-key">🛡 Effective HP</span><span class="info-val">${fmt(ehp)}</span></div>
+      <div class="info-row"><span class="info-key">⚔ Tower DPS</span><span class="info-val">${fmt(baseDps)}</span></div>
+    </div>`;
+
     E.tMenuBody.innerHTML = html;
-    E.tMenuBody.querySelectorAll('.upg-btn').forEach(btn => {
-      btn.addEventListener('click', function () { socketCtrl.applyUpgrade(name, this.dataset.cat); });
-    });
+
+    // Clickable icon handlers
     if (interactive) {
-      const sb = E.tMenuBody.querySelector('#setHqBtn');
-      if (sb) sb.addEventListener('click', () => {
-        const dd = E.tMenuBody.querySelector('#hqSelDd');
-        if (dd) socketCtrl.setHqTerritory(dd.value);
+      E.tMenuBody.querySelectorAll('.upg-icon-btn').forEach(icon => {
+        if (icon.classList.contains('maxed')) return;
+        icon.addEventListener('click', function (e) {
+          e.preventDefault();
+          socketCtrl.applyUpgrade(name, this.dataset.cat);
+        });
+        icon.addEventListener('contextmenu', function (e) {
+          e.preventDefault();
+          // Downgrade: we don't have a backend endpoint for this, so it's visual only for now
+          // TODO: socketCtrl.applyDowngrade(name, this.dataset.cat);
+        });
       });
     }
   }
 
-  /* ── Bonuses ──────────────────────────────────────────────────────────────── */
+  /* ── Bonuses (3-row grid with clickable icons) ───────────────────────────── */
+  const BONUS_ROWS = [
+    ['strongerMobs','multiAttack','aura','volley'],
+    ['gatheringExp','mobExp','mobDamage','pvpDamage','xpSeeking','tomeSeeking','emeraldSeeking'],
+    ['largerResourceStorage','largerEmeraldStorage','efficientResources','efficientEmeralds','resourceRate','emeraldRate'],
+  ];
   function renderTabBonuses(name, room, interactive) {
     const bon = (room.territoryBonuses && room.territoryBonuses[name]) || {};
-    const towerBonus = ['strongerMobs', 'multiAttack', 'aura', 'volley'];
-    const ecoBonus   = ['resourceProduction', 'emeraldProduction'];
-    let html = '<div class="bonus-sec-hdr">🏰 Tower Bonuses</div><div class="bonus-list">';
-    towerBonus.forEach(key => {
-      const def = BONUS_DEFS[key]; const lv = parseInt(bon[key] || 0); const maxed = lv >= def.maxLevel;
-      html += bonusCard(key, def, lv, maxed, interactive);
+    let html = '';
+    BONUS_ROWS.forEach((row, ri) => {
+      html += `<div class="bonus-sec-hdr" style="margin-top:${ri?'8':'0'}px;">${ri===0?'🏰 Tower':ri===1?'⚔ Combat & Seeking':'📈 Economy'} Bonuses</div>`;
+      html += '<div class="bonus-grid">';
+      row.forEach(key => {
+        const def = BONUS_DEFS[key]; if (!def) return;
+        const lv = parseInt(bon[key] || 0); const maxed = lv >= def.maxLevel;
+        const drain = def.costs[lv] || 0;
+        html += `<div class="bonus-item">
+          <div class="b-icon" data-key="${key}" style="cursor:${interactive&&!maxed?'pointer':'default'};">
+            ${def.icon}
+            ${interactive && !maxed ? '<span class="b-hint">±</span>' : ''}
+          </div>
+          <div class="b-info">
+            <div class="b-name">${def.label}</div>
+            <div class="b-lv">${lv}/${def.maxLevel}${drain ? ' | '+fmt(drain)+'/hr' : ''}</div>
+          </div>
+        </div>`;
+      });
+      html += '</div>';
     });
-    html += '</div><div class="bonus-divider"></div><div class="bonus-sec-hdr">📈 Economy Bonuses</div><div class="bonus-list">';
-    ecoBonus.forEach(key => {
-      const def = BONUS_DEFS[key]; const lv = parseInt(bon[key] || 0); const maxed = lv >= def.maxLevel;
-      html += bonusCard(key, def, lv, maxed, interactive);
-    });
-    html += '</div>';
     E.tMenuBody.innerHTML = html;
-    E.tMenuBody.querySelectorAll('.bonus-btn').forEach(btn => {
-      btn.addEventListener('click', function () { socketCtrl.applyBonus(name, this.dataset.key); });
-    });
-  }
-  function bonusCard(key, def, lv, maxed, interactive) {
-    const drain = def.costs[lv] || 0; const nextD = maxed ? 0 : (def.costs[lv+1] || 0);
-    return `<div class="bonus-card">
-      <div class="bonus-icon-cell">${def.icon}</div>
-      <div class="bonus-info">
-        <div class="bonus-name">${def.label} <span style="color:#4a7030;font-size:14px;">Lv${lv}/${def.maxLevel}</span></div>
-        <div class="bonus-desc">${def.desc} | ${def.resource} | ${drain ? fmt(drain) + '/hr' : '—'}</div>
-        ${!maxed ? `<div class="bonus-desc" style="color:#2a5020;">Next: ${fmt(nextD)} ${def.resource}/hr</div>` : '<div class="bonus-desc" style="color:#3a7020;">MAX ★</div>'}
-      </div>
-      ${interactive && !maxed ? `<button class="mc-btn green bonus-btn" data-key="${key}" style="font-size:20px;padding:4px 10px;">+</button>` : ''}
-    </div>`;
+    if (interactive) {
+      E.tMenuBody.querySelectorAll('.b-icon').forEach(icon => {
+        const key = icon.dataset.key;
+        const def = BONUS_DEFS[key]; if (!def) return;
+        const lv = parseInt(bon[key] || 0);
+        if (lv >= def.maxLevel) return;
+        icon.addEventListener('click', () => socketCtrl.applyBonus(name, key));
+        icon.addEventListener('contextmenu', e => {
+          e.preventDefault();
+          // TODO: downgrade not yet supported by backend
+        });
+      });
+    }
   }
 
   /* ── Storage ──────────────────────────────────────────────────────────────── */
   function renderTabStorage(name, room, interactive) {
     const isHq  = name === room.hqTerritory;
     const upg   = (room.territoryUpgrades && room.territoryUpgrades[name]) || {};
-    const sl    = parseInt(upg.storage || 0);
+    const emSl  = parseInt(upg.largerEmeraldStorage || 0);
+    const rsSl  = parseInt(upg.largerResourceStorage || 0);
     const store = (room.perTerritoryStorage && room.perTerritoryStorage[name]) || {};
     let html = '';
     if (isHq) {
-      html += '<div class="mc-label" style="margin-bottom:8px;">📦 HQ Resource Bank</div>';
-      [['emeralds','🟡'],['wood','🪵'],['ore','⛏'],['crops','🌾'],['fish','🐟']].forEach(([k,ico]) => {
-        const val = store[k] || 0; const cap = hqCap(sl, k);
+      html += '<div class="mc-label" style="margin-bottom:8px;">📦 HQ Bank</div>';
+      [['emeralds','💰'],['wood','🪵'],['ore','⛏'],['crops','🌾'],['fish','🐟']].forEach(([k,ico]) => {
+        const val = store[k] || 0;
+        const cap = hqCap(upg, k);
         const pct = Math.min(100, cap ? (val / cap) * 100 : 0);
         const fcls = val > cap ? 'danger' : pct > 75 ? 'warn' : '';
         html += `<div class="hq-res-bar">
@@ -811,17 +901,36 @@
         html += `<div class="mc-small">${k}: ${fmt(store[k])}</div>`;
       });
     }
-    const smaxed = sl >= 11;
-    html += `<div style="margin-top:10px;"><div class="upg-lv">
-      <span class="lv-badge${smaxed?' maxed':''}">Lv ${sl}/11</span>
-      <div class="seg-bar" style="flex:1;">${Array.from({length:11},(_,i)=>`<span class="${i<sl?'on'+(smaxed?' maxed':''):''}"></span>`).join('')}</div>
-    </div>`;
-    if (interactive && !smaxed && isHq) html += `<button class="mc-btn upg-btn" data-cat="storage" style="width:100%;margin-top:6px;font-size:16px;">UPGRADE STORAGE</button>`;
-    else if (!isHq && interactive)     html += `<button id="makeHqBtn" class="mc-btn blue" style="width:100%;margin-top:6px;font-size:18px;">👑 Set as HQ</button>`;
+
+    // Larger Emerald Storage
+    const emMaxed = emSl >= 11;
+    const emCost = emMaxed ? 0 : EMERALD_STORAGE_COSTS_WOOD[emSl + 1];
+    html += `<div style="margin-top:10px;"><div class="upg-lv" style="display:flex;justify-content:space-between;align-items:center;">
+      <span class="lv-badge${emMaxed?' maxed':''}" style="font-size:12px;">Em Storage Lv ${emSl}/11</span>
+      ${!emMaxed ? `<span style="font-size:11px;color:#8ab573;">Next: ${fmt(emCost)} wood</span>` : '<span style="font-size:11px;color:#3a7020;">MAX</span>'}
+    </div>
+    <div class="seg-bar">${Array.from({length:11},(_,i)=>`<span class="${i<emSl?'on'+(emMaxed?' maxed':''):''}"></span>`).join('')}</div>`;
+    if (interactive && !emMaxed && isHq) html += `<button class="mc-btn upg-btn-em" data-cat="largerEmeraldStorage" style="width:100%;margin-top:4px;font-size:14px;padding:3px 0;">UPGRADE (Wood)</button>`;
     html += '</div>';
+
+    // Larger Resource Storage
+    const rsMaxed = rsSl >= 11;
+    const rsCost = rsMaxed ? 0 : RESOURCE_STORAGE_COSTS_EM[rsSl + 1];
+    html += `<div style="margin-top:10px;"><div class="upg-lv" style="display:flex;justify-content:space-between;align-items:center;">
+      <span class="lv-badge${rsMaxed?' maxed':''}" style="font-size:12px;">Res Storage Lv ${rsSl}/11</span>
+      ${!rsMaxed ? `<span style="font-size:11px;color:#8ab573;">Next: ${fmt(rsCost)} emeralds</span>` : '<span style="font-size:11px;color:#3a7020;">MAX</span>'}
+    </div>
+    <div class="seg-bar">${Array.from({length:11},(_,i)=>`<span class="${i<rsSl?'on'+(rsMaxed?' maxed':''):''}"></span>`).join('')}</div>`;
+    if (interactive && !rsMaxed && isHq) html += `<button class="mc-btn upg-btn-rs" data-cat="largerResourceStorage" style="width:100%;margin-top:4px;font-size:14px;padding:3px 0;">UPGRADE (Emeralds)</button>`;
+    html += '</div>';
+
+    if (!isHq && interactive) html += `<button id="makeHqBtn" class="mc-btn blue" style="width:100%;margin-top:12px;font-size:18px;">👑 Set as HQ</button>`;
+
     E.tMenuBody.innerHTML = html;
-    const ub = E.tMenuBody.querySelector('.upg-btn');
-    if (ub) ub.addEventListener('click', () => socketCtrl.applyUpgrade(name, 'storage'));
+    const btnEm = E.tMenuBody.querySelector('.upg-btn-em');
+    if (btnEm) btnEm.addEventListener('click', () => socketCtrl.applyStorageUpgrade(name, 'largerEmeraldStorage'));
+    const btnRs = E.tMenuBody.querySelector('.upg-btn-rs');
+    if (btnRs) btnRs.addEventListener('click', () => socketCtrl.applyStorageUpgrade(name, 'largerResourceStorage'));
     const hqb = E.tMenuBody.querySelector('#makeHqBtn');
     if (hqb) hqb.addEventListener('click', () => socketCtrl.setHqTerritory(name));
   }
@@ -875,16 +984,46 @@
     const selSt = new Set(sel);
     const routes = t ? t.tradeRoutes : [];
     const conns  = routes.filter(r => r !== name && selSt.has(r)).length;
+    
     let treaPct = 0;
-    if (held) treaPct = Math.min(100, Math.floor((Date.now() - held) / 3600000) * 5);
-    const resMult = 1 + (treaPct/100) + ((bon.resourceProduction||0)*0.10);
-    const emMult  = 1 + (treaPct/100) + ((bon.emeraldProduction||0)*0.10);
-    const icons = { emeralds:'🟡', wood:'🪵', ore:'⛏', crops:'🌾', fish:'🐟' };
+    let treaLabel = '0% (<1 hour)';
+    if (held) {
+      const ms = Date.now() - held;
+      for (let i = TREASURY_TIER_MS.length - 1; i >= 0; i--) {
+        if (ms >= TREASURY_TIER_MS[i]) {
+          treaPct = TREASURY_TIER_BONUS[i] * 100;
+          treaLabel = TREASURY_TIER_LABELS[i];
+          break;
+        }
+      }
+    }
+    
+    // Eco Mults
+    const emProdBonus = ((bon.efficientEmeralds||0)*0.10) + ((bon.emeraldRate||0)*0.10);
+    const rsProdBonus = ((bon.efficientResources||0)*0.10) + ((bon.resourceRate||0)*0.10);
+    const resMult = 1 + (treaPct/100) + rsProdBonus;
+    const emMult  = 1 + (treaPct/100) + emProdBonus;
+
+    // Stat estimations
+    const hlv = parseInt(upg.health || 0); const dlv = parseInt(upg.defense || 0); const dmlv = parseInt(upg.damage || 0);
+    const baseHp = Math.floor(1000000 * (1 + hlv * 0.25) * (1 + 0.3 * conns));
+    const ehp = Math.floor(baseHp / (1 - Math.min(0.80, dlv * 0.05)));
+    const baseDps = Math.floor(500000 * (1 + dmlv * 0.25) * (1 + 0.3 * conns));
+
+    const icons = { emeralds:'💰', wood:'🪵', ore:'⛏', crops:'🌾', fish:'🐟' };
     let html = `
       <div class="info-row"><span class="info-key">📍 Territory</span><span class="info-val">${name}</span></div>
       ${isHq?'<div class="info-row"><span class="info-key">👑 Status</span><span class="info-val">Guild HQ</span></div>':''}
-      <div class="info-row"><span class="info-key">🔗 Connections</span><span class="info-val">${conns} (×${(1+0.3*conns).toFixed(1)} HP)</span></div>
-      <div class="info-row"><span class="info-key">⏱ Treasury</span><span class="info-val"><span class="treasury-badge">+${treaPct}%</span></span></div>
+      <div class="info-row"><span class="info-key">⏱ Treasury Bonus</span><span class="info-val"><span class="treasury-badge">+${treaPct}%</span> <span style="font-size:12px;color:#888;">(${treaLabel})</span></span></div>
+      <div class="info-row" style="margin-top:2px;"><span class="info-key">Territory Held Since</span><span class="info-val" style="font-size:12px;">${held ? new Date(held).toLocaleTimeString() : 'N/A'}</span></div>
+      
+      <div class="info-divider"></div>
+      <div class="mc-label" style="margin-bottom:6px;">Combat Stats</div>
+      <div class="info-row"><span class="info-key">🔗 Connections</span><span class="info-val">${conns} (×${(1+0.3*conns).toFixed(2)} Multiplier)</span></div>
+      <div class="info-row"><span class="info-key">🛡 Tower HP</span><span class="info-val">${fmt(baseHp)}</span></div>
+      <div class="info-row"><span class="info-key">🛡 Effective HP</span><span class="info-val" style="color:#a8dd55;">${fmt(ehp)}</span></div>
+      <div class="info-row"><span class="info-key">⚔ Tower DPS</span><span class="info-val" style="color:#dd6655;">${fmt(baseDps)}</span></div>
+
       <div class="info-divider"></div>
       <div class="mc-label" style="margin-bottom:6px;">Production / tick</div>`;
     if (t) {
@@ -894,17 +1033,109 @@
         html += `<div class="info-row"><span class="info-key">${icons[k]} ${k}</span><span class="info-val">${fmt(base)} → ${fmt(Math.floor(base*mult))}</span></div>`;
       });
     }
-    const upgr = ['damage','attackSpeed','health','defense'].filter(c => upg[c]);
+    const upgr = ['damage','attackSpeed','health','defense','largerEmeraldStorage','largerResourceStorage'].filter(c => upg[c]);
     const bonr = Object.keys(BONUS_DEFS).filter(k => bon[k]);
     if (upgr.length || bonr.length) {
       html += `<div class="info-divider"></div><div class="mc-label" style="margin-bottom:6px;">Active Upgrades & Bonuses</div>`;
-      upgr.forEach(c => { html += `<div class="info-row"><span class="info-key">${UPGRADE_ICON[c]} ${UPGRADE_LABEL[c]}</span><span class="info-val">Lv${upg[c]}/11</span></div>`; });
+      upgr.forEach(c => {
+        const lbl = c === 'largerEmeraldStorage' ? 'Em. Storage' : c === 'largerResourceStorage' ? 'Res. Storage' : UPGRADE_LABEL[c];
+        const ico = c.includes('Storage') ? '📦' : UPGRADE_ICON[c];
+        html += `<div class="info-row"><span class="info-key">${ico} ${lbl}</span><span class="info-val">Lv${upg[c]}/11</span></div>`;
+      });
       bonr.forEach(k => {
         const d = BONUS_DEFS[k];
         html += `<div class="info-row"><span class="info-key">${d.icon} ${d.label}</span><span class="info-val">Lv${bon[k]}/${d.maxLevel}</span></div>`;
       });
     }
     E.tMenuBody.innerHTML = html;
+  }
+
+  /* ── Cost & Output ─────────────────────────────────────────────────────── */
+  function renderTabCostOutput(name, room, interactive) {
+    const t   = state.territoryByName.get(name);
+    const upg = (room.territoryUpgrades && room.territoryUpgrades[name]) || {};
+    const bon = (room.territoryBonuses  && room.territoryBonuses[name])  || {};
+    const icons = { emeralds:'💰', wood:'🪵', ore:'⛏', crops:'🌾', fish:'🐟' };
+    let totalCost = 0, totalOutput = 0;
+    // Upgrade drains
+    ['damage','attackSpeed','health','defense'].forEach(cat => {
+      const lv = parseInt(upg[cat] || 0);
+      totalCost += UPGRADE_COSTS_PER_LEVEL[lv] || 0;
+    });
+    // Bonus drains
+    Object.keys(BONUS_DEFS).forEach(key => {
+      const lv = parseInt(bon[key] || 0);
+      totalCost += BONUS_DEFS[key].costs[lv] || 0;
+    });
+    // Production output
+    const emProdBonus = ((bon.efficientEmeralds||0)*0.10) + ((bon.emeraldRate||0)*0.10);
+    const rsProdBonus = ((bon.efficientResources||0)*0.10) + ((bon.resourceRate||0)*0.10);
+    let outputRows = '';
+    if (t) {
+      Object.entries(t.resources).forEach(([k, base]) => {
+        if (!base) return;
+        const mult = k === 'emeralds' ? 1 + emProdBonus : 1 + rsProdBonus;
+        const prod = Math.floor(base * mult);
+        totalOutput += prod;
+        outputRows += `<div class="info-row"><span class="info-key">${icons[k]} ${k}</span><span class="info-val">+${fmt(prod)}/hr</span></div>`;
+      });
+    }
+    const net = totalOutput - totalCost;
+    const netColor = net >= 0 ? '#2a6a20' : '#cc2222';
+    let html = `<div class="mc-label" style="margin-bottom:8px;">📊 Hourly Summary</div>
+      <div style="background:#b8a870;border:2px solid #9a8558;padding:8px;margin-bottom:8px;">
+        <div class="info-row"><span class="info-key">🔴 Total Cost</span><span class="info-val" style="color:#cc3333;">-${fmt(totalCost)}/hr</span></div>
+        <div class="info-row"><span class="info-key">🟢 Total Output</span><span class="info-val" style="color:#2a6a20;">+${fmt(totalOutput)}/hr</span></div>
+        <div style="height:1px;background:#9a8558;margin:6px 0;"></div>
+        <div class="info-row"><span class="info-key" style="font-size:20px;">NET</span><span class="info-val" style="font-size:20px;color:${netColor};">${net>=0?'+':''}${fmt(net)}/hr</span></div>
+      </div>
+      <div class="mc-label" style="margin-bottom:6px;">Production Breakdown</div>
+      ${outputRows || '<div class="mc-small">No resources produced here.</div>'}`;
+    E.tMenuBody.innerHTML = html;
+  }
+
+  /* ── Trade Route ────────────────────────────────────────────────────────── */
+  function renderTabTradeRoute(name, room, interactive) {
+    const routeM = (room.territoryRouteMode && room.territoryRouteMode[name]) || 'fastest';
+    const hq     = room.hqTerritory || '';
+    const selected = room.selectedTerritories || [];
+    const adj    = buildAdjacency(selected);
+    const path   = bfsHq(name, hq, adj);
+    const hops   = path ? path.length - 1 : '?';
+    let html = `<div class="mc-label" style="margin-bottom:6px;">Route to HQ (${hq || 'none'})</div>
+      <div class="route-toggle">
+        <button class="mc-btn${routeM==='fastest'?' green':''} route-btn" data-mode="fastest" style="flex:1;">⚡ Fastest</button>
+        <button class="mc-btn${routeM==='cheapest'?' green':''} route-btn" data-mode="cheapest" style="flex:1;">💰 Cheapest</button>
+      </div>
+      <div class="route-preview" style="margin-top:8px;">
+        ${path ? path.map((p,i) => i===0 ? `<b style="color:#005500;">${p} 👑</b>` : `<span style="color:#5a3820;">→ ${p}</span>`).join(' ') : '<span style="color:#cc3333;">⚠ No route to HQ</span>'}
+        ${path ? `<br><span class="mc-small">Hops: ${hops} | Mode: ${routeM}</span>` : ''}
+      </div>`;
+    E.tMenuBody.innerHTML = html;
+    E.tMenuBody.querySelectorAll('.route-btn').forEach(btn => {
+      btn.addEventListener('click', function () { if (interactive) socketCtrl.setRouteMode(name, this.dataset.mode); });
+    });
+  }
+
+  /* ── Set HQ ─────────────────────────────────────────────────────────────── */
+  function renderTabSetHq(name, room, interactive) {
+    const isHq = name === room.hqTerritory;
+    let html = `<div style="text-align:center;padding:16px;">
+      <div style="font-size:48px;margin-bottom:10px;">${isHq ? '👑' : '🏠'}</div>
+      <div class="mc-title" style="margin-bottom:8px;">${isHq ? 'This IS your Guild HQ' : 'Set as Guild HQ'}</div>`;
+    if (isHq) {
+      html += `<div class="mc-label" style="color:#2a6a20;">✅ ${name} is currently the HQ territory.</div>
+        <div class="mc-small" style="margin-top:8px;">All resources flow here. Storage caps apply here.</div>`;
+    } else if (interactive) {
+      html += `<div class="mc-small" style="margin-bottom:12px;">Moving HQ here will change where resources accumulate.</div>
+        <button id="setHqConfirmBtn" class="mc-btn blue" style="font-size:22px;padding:10px 30px;">👑 SET AS HQ</button>`;
+    } else {
+      html += `<div class="mc-small">Only the defender can change HQ during prep/playing.</div>`;
+    }
+    html += '</div>';
+    E.tMenuBody.innerHTML = html;
+    const btn = E.tMenuBody.querySelector('#setHqConfirmBtn');
+    if (btn) btn.addEventListener('click', () => socketCtrl.setHqTerritory(name));
   }
 
   // ─── Socket Controller ────────────────────────────────────────────────────────
@@ -1101,6 +1332,13 @@
         if (res && res.ok && res.estimates) {
           state.warEstimates = { towerStats: state.warEstimates && state.warEstimates.towerStats, estimates: res.estimates };
         }
+      });
+    },
+
+    applyStorageUpgrade(terrName, category) {
+      if (!state.socket) return;
+      state.socket.emit('storage:apply', { territoryName: terrName, category }, res => {
+        if (res && !res.ok) alert(res.error || 'Storage upgrade failed.');
       });
     },
 
