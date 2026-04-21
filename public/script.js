@@ -82,6 +82,7 @@
     liveTickTimer: null,       // 1s interval for real-time resource display
     liveRates: null,           // { base: {res: N}, netPerSec: {res: N}, capturedAt: ms }
     attackCdTimer: null,
+    menuLiveTimer: null,       // 1s interval for live Resources-tab refresh
     activeMenu: null,
     activeTab: 'upgrades',
     warEstimates: null,
@@ -825,6 +826,19 @@
   }
 
   // ─── Territory Menu ───────────────────────────────────────────────────────────
+  function startMenuLiveTimer() {
+    stopMenuLiveTimer();
+    if (state.activeTab !== 'storage') return; // only for Resources tab
+    state.menuLiveTimer = setInterval(() => {
+      if (!state.activeMenu || !state.currentRoom) return;
+      if (!E.tMenuOverlay || E.tMenuOverlay.style.display === 'none') { stopMenuLiveTimer(); return; }
+      renderTabStorage(state.activeMenu, state.currentRoom, false);
+    }, 1000);
+  }
+  function stopMenuLiveTimer() {
+    if (state.menuLiveTimer) { clearInterval(state.menuLiveTimer); state.menuLiveTimer = null; }
+  }
+
   function openMenu(name) {
     state.activeMenu = name;
     const room = state.currentRoom;
@@ -836,9 +850,10 @@
       ).join('');
     }
     renderMenuContent();
+    startMenuLiveTimer();
     if (E.tMenuOverlay) E.tMenuOverlay.style.display = 'flex';
   }
-  function closeMenu() { if (E.tMenuOverlay) E.tMenuOverlay.style.display = 'none'; state.activeMenu = null; }
+  function closeMenu() { stopMenuLiveTimer(); if (E.tMenuOverlay) E.tMenuOverlay.style.display = 'none'; state.activeMenu = null; }
   function refreshMenuIfOpen() {
     if (state.activeMenu && E.tMenuOverlay && E.tMenuOverlay.style.display !== 'none') renderMenuContent();
   }
@@ -1004,25 +1019,50 @@
     const isHq  = name === room.hqTerritory;
     const upg   = (room.territoryUpgrades && room.territoryUpgrades[name]) || {};
     const store = (room.perTerritoryStorage && room.perTerritoryStorage[name]) || {};
+    const RES   = [['emeralds','💰'],['wood','🪵'],['ore','⛏'],['crops','🌾'],['fish','🐟']];
     let html = '';
+
     if (isHq) {
-      html += '<div class="mc-label" style="margin-bottom:8px;">📦 HQ Bank</div>';
-      [['emeralds','💰'],['wood','🪵'],['ore','⛏'],['crops','🌾'],['fish','🐟']].forEach(([k,ico]) => {
-        const val = store[k] || 0;
+      html += '<div class="mc-label" style="margin-bottom:8px;">📦 HQ Bank <span style="font-size:11px;color:#7a5030;">(live)</span></div>';
+      const lr = state.liveRates;
+      RES.forEach(([k, ico]) => {
         const cap = hqCap(upg, k);
-        const pct = Math.min(100, cap ? (val / cap) * 100 : 0);
-        const fcls = val > cap ? 'danger' : pct > 75 ? 'warn' : '';
+        let val;
+        if (lr) {
+          const sec = (Date.now() - lr.capturedAt) / 1000;
+          val = Math.max(0, Math.min(cap, Math.round(lr.base[k] + lr.netPerSec[k] * sec)));
+        } else {
+          val = store[k] || 0;
+        }
+        const pct  = Math.min(100, cap ? (val / cap) * 100 : 0);
+        const fcls = val >= cap ? 'danger' : pct > 75 ? 'warn' : '';
         html += `<div class="hq-res-bar">
-          <div class="hq-res-lbl"><span>${ico} ${k}</span><span class="${val>cap?'over':''}">${fmt(val)} / ${fmt(cap)}</span></div>
+          <div class="hq-res-lbl"><span>${ico} ${k}</span><span class="${val>=cap?'over':''}">${fmt(val)} / ${fmt(cap)}</span></div>
           <div class="mc-bar-bg"><div class="mc-bar-fill ${fcls}" style="width:${pct}%;"></div></div>
         </div>`;
       });
       html += `<div class="mc-small" style="margin-top:10px;color:#7a5030;">⚙ Storage capacity is upgraded in the <b>Bonus</b> tab.</div>`;
     } else {
-      html += `<div class="passthrough-box">📦 Non-HQ Territory<br>Resources pass through freely toward HQ each tick.</div>`;
-      Object.keys(store).filter(k => (store[k] || 0) > 0).forEach(k => {
-        html += `<div class="mc-small">${k}: ${fmt(store[k])}</div>`;
+      const inact = (room.inactiveUpgradesSnapshot && room.inactiveUpgradesSnapshot[name]) || [];
+      html += `<div class="passthrough-box">
+        📦 Non-HQ Territory${inact.length ? ` — <span style="color:#c43030;">⚠ ${inact.length} inactive upgrade(s)</span>` : ''}<br>
+        Resources pass through toward HQ each tick.
+      </div>`;
+      html += '<div class="mc-label" style="margin:8px 0 4px;">Current Storage</div>';
+      let anyStored = false;
+      RES.forEach(([k, ico]) => {
+        const val = store[k] || 0;
+        if (val > 0) anyStored = true;
+        html += `<div class="hq-res-bar" style="margin-bottom:6px;">
+          <div class="hq-res-lbl">
+            <span>${ico} ${k}</span>
+            <span style="${val > 0 ? 'color:#3a7a20;font-weight:bold;' : 'color:#888;'}">${val > 0 ? fmt(val) : '—'}</span>
+          </div>
+        </div>`;
       });
+      if (!anyStored) {
+        html += `<div class="mc-small" style="color:#888;">All resources passed to HQ this tick.</div>`;
+      }
     }
     E.tMenuBody.innerHTML = html;
   }
@@ -1144,45 +1184,88 @@
 
   /* ── Cost & Output ─────────────────────────────────────────────────────── */
   function renderTabCostOutput(name, room, interactive) {
-    const t   = state.territoryByName.get(name);
-    const upg = (room.territoryUpgrades && room.territoryUpgrades[name]) || {};
-    const bon = (room.territoryBonuses  && room.territoryBonuses[name])  || {};
-    const icons = { emeralds:'💰', wood:'🪵', ore:'⛏', crops:'🌾', fish:'🐟' };
-    let totalCost = 0, totalOutput = 0;
-    // Upgrade drains
-    ['damage','attackSpeed','health','defense'].forEach(cat => {
-      const lv = parseInt(upg[cat] || 0);
-      totalCost += UPGRADE_COSTS_PER_LEVEL[lv] || 0;
-    });
-    // Bonus drains
-    Object.keys(BONUS_DEFS).forEach(key => {
-      const lv = parseInt(bon[key] || 0);
-      totalCost += BONUS_DEFS[key].costs[lv] || 0;
-    });
-    // Production output
-    const emProdBonus = ((bon.efficientEmeralds||0)*0.10) + ((bon.emeraldRate||0)*0.10);
-    const rsProdBonus = ((bon.efficientResources||0)*0.10) + ((bon.resourceRate||0)*0.10);
-    let outputRows = '';
-    if (t) {
-      Object.entries(t.resources).forEach(([k, base]) => {
-        if (!base) return;
-        const mult = k === 'emeralds' ? 1 + emProdBonus : 1 + rsProdBonus;
-        const prod = Math.floor(base * mult);
-        totalOutput += prod;
-        outputRows += `<div class="info-row"><span class="info-key">${icons[k]} ${k}</span><span class="info-val">+${fmt(prod)}/hr</span></div>`;
+    const selected = room.selectedTerritories || [];
+    const icons    = { emeralds:'💰', wood:'🪵', ore:'⛏', crops:'🌾', fish:'🐟' };
+    const RES      = ['emeralds','wood','ore','crops','fish'];
+
+    const totalGain = { emeralds:0, wood:0, ore:0, crops:0, fish:0 };
+    const totalCost = { emeralds:0, wood:0, ore:0, crops:0, fish:0 };
+
+    selected.forEach(tName => {
+      const t   = state.territoryByName.get(tName);
+      const upg = (room.territoryUpgrades && room.territoryUpgrades[tName]) || {};
+      const bon = (room.territoryBonuses  && room.territoryBonuses[tName])  || {};
+
+      // Production gains (hourly)
+      if (t) {
+        const emProdBonus = ((bon.efficientEmeralds||0)*0.10) + ((bon.emeraldRate||0)*0.10);
+        const rsProdBonus = ((bon.efficientResources||0)*0.10) + ((bon.resourceRate||0)*0.10);
+        RES.forEach(r => {
+          const base = t.resources[r] || 0;
+          const mult = r === 'emeralds' ? 1 + emProdBonus : 1 + rsProdBonus;
+          totalGain[r] += Math.floor(base * mult);
+        });
+      }
+
+      // Tower upgrade drains
+      ['damage','attackSpeed','health','defense'].forEach(cat => {
+        const lv = parseInt(upg[cat] || 0);
+        if (lv) totalCost[UPGRADE_RESOURCE[cat]] += UPGRADE_COSTS_PER_LEVEL[lv] || 0;
       });
-    }
-    const net = totalOutput - totalCost;
-    const netColor = net >= 0 ? '#2a6a20' : '#cc2222';
-    let html = `<div class="mc-label" style="margin-bottom:8px;">📊 Hourly Summary</div>
-      <div style="background:#b8a870;border:2px solid #9a8558;padding:8px;margin-bottom:8px;">
-        <div class="info-row"><span class="info-key">🔴 Total Cost</span><span class="info-val" style="color:#cc3333;">-${fmt(totalCost)}/hr</span></div>
-        <div class="info-row"><span class="info-key">🟢 Total Output</span><span class="info-val" style="color:#2a6a20;">+${fmt(totalOutput)}/hr</span></div>
-        <div style="height:1px;background:#9a8558;margin:6px 0;"></div>
-        <div class="info-row"><span class="info-key" style="font-size:20px;">NET</span><span class="info-val" style="font-size:20px;color:${netColor};">${net>=0?'+':''}${fmt(net)}/hr</span></div>
-      </div>
-      <div class="mc-label" style="margin-bottom:6px;">Production Breakdown</div>
-      ${outputRows || '<div class="mc-small">No resources produced here.</div>'}`;
+
+      // Storage upgrade drains
+      const emSl = parseInt(upg.largerEmeraldStorage || 0);
+      const rsSl = parseInt(upg.largerResourceStorage || 0);
+      if (emSl) totalCost.wood     += EMERALD_STORAGE_COSTS_WOOD[emSl] || 0;
+      if (rsSl) totalCost.emeralds += RESOURCE_STORAGE_COSTS_EM[rsSl]  || 0;
+
+      // Bonus drains
+      Object.entries(BONUS_DEFS).forEach(([key, def]) => {
+        const lv = STORAGE_BONUS_KEYS.has(key) ? parseInt(upg[key] || 0) : parseInt(bon[key] || 0);
+        if (lv) totalCost[def.resource] += def.costs[lv] || 0;
+      });
+    });
+
+    // Grand aggregate (all resources, different units — rough summary)
+    const sumGain = RES.reduce((s, r) => s + totalGain[r], 0);
+    const sumCost = RES.reduce((s, r) => s + totalCost[r], 0);
+    const sumNet  = sumGain - sumCost;
+
+    let html = `<div class="mc-label" style="margin-bottom:8px;">📊 Hourly Summary — All ${selected.length} Territories</div>`;
+    html += `<div style="background:#b8a870;border:2px solid #9a8558;padding:8px;margin-bottom:8px;">
+      <div class="info-row"><span class="info-key">🔴 Total Cost</span><span class="info-val" style="color:#cc3333;">−${fmt(sumCost)}/hr</span></div>
+      <div class="info-row"><span class="info-key">🟢 Total Output</span><span class="info-val" style="color:#2a6a20;">+${fmt(sumGain)}/hr</span></div>
+      <div style="height:1px;background:#9a8558;margin:6px 0;"></div>
+      <div class="info-row"><span class="info-key" style="font-size:18px;">NET</span>
+        <span class="info-val" style="font-size:18px;color:${sumNet>=0?'#2a6a20':'#cc2222'};">` +
+        `${sumNet>=0?'+':''}${fmt(sumNet)}/hr</span></div>
+    </div>`;
+
+    html += `<div class="mc-label" style="margin-bottom:6px;">Per Resource — All Territories Combined</div>
+    <div style="background:#b8a870;border:2px solid #9a8558;padding:8px;">`;
+
+    let anyRes = false;
+    RES.forEach(r => {
+      const gain = totalGain[r];
+      const cost = totalCost[r];
+      if (!gain && !cost) return;
+      anyRes = true;
+      const net = gain - cost;
+      const col = net >= 0 ? '#2a6a20' : '#cc2222';
+      html += `<div style="margin-bottom:8px;border-bottom:1px solid #9a8558;padding-bottom:6px;">
+        <div class="info-row" style="margin-bottom:2px;">
+          <span class="info-key" style="font-size:16px;">${icons[r]} ${r.charAt(0).toUpperCase()+r.slice(1)}</span>
+          <span style="font-family:VT323,monospace;font-size:18px;color:${col};font-weight:bold;">${net>=0?'+':''}${fmt(net)}/hr</span>
+        </div>
+        <div style="display:flex;gap:12px;font-family:VT323,monospace;font-size:13px;padding-left:4px;">
+          ${gain ? `<span style="color:#2a6a20;">▲ +${fmt(gain)} prod</span>` : '<span style="color:#888;">▲ no prod</span>'}
+          ${cost ? `<span style="color:#cc3333;">▼ −${fmt(cost)} drain</span>` : '<span style="color:#888;">▼ no drain</span>'}
+        </div>
+      </div>`;
+    });
+
+    if (!anyRes) html += `<div class="mc-small">No production or costs across selected territories.</div>`;
+    html += `</div>`;
     E.tMenuBody.innerHTML = html;
   }
 
@@ -1497,6 +1580,7 @@
       this.classList.add('active');
       state.activeTab = this.dataset.tab;
       renderMenuContent();
+      startMenuLiveTimer(); // start/stop live refresh depending on active tab
     });
   });
   if (E.tMenuSelect) E.tMenuSelect.addEventListener('change', function () {
